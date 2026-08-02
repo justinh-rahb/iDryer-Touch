@@ -9,8 +9,7 @@ LAN. Same idea as [iHeater Remote](https://github.com/justinh-rahb/iHeater-Remot
 applied to the dryer.
 
 > **Status: pre-hardware.** The firmware builds and the web UI is verified in a
-> browser, but nothing has been flashed to a board yet. The UART wiring below is
-> derived from datasheets and needs bench confirmation. Do not treat this as
+> browser, but nothing has been flashed to a board yet. Do not treat this as
 > working firmware.
 
 ## What it does
@@ -37,7 +36,9 @@ Target board is the classic **ESP32-2432S028R "Cheap Yellow Display"** — 2.8"
 320×240 ILI9341, XPT2046 resistive touch, classic ESP32, 4 MB flash, no PSRAM.
 
 Only three GPIOs on that board are unallocated (22, 27, and input-only 35), so the
-UART bridge to the controller uses the `CN1` header:
+UART bridge to the controller uses the `CN1` header. This pairing is proven on
+the same board by [klipper-micro](https://github.com/justinh-rahb/klipper-micro),
+which runs UART2 on GPIO22/27 at 250000 baud:
 
 | CN1 pin | Connects to |
 | --- | --- |

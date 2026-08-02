@@ -140,8 +140,16 @@ a separate SPI bus, classic dual-core ESP32, 4 MB flash, **no PSRAM**.
 
 ### GPIO — the binding physical constraint
 
-The board allocates nearly every pin. Confirmed against two independent pinouts
-(Random Nerd Tutorials, Mischianti):
+**Confirmed on working hardware**, not just datasheets:
+[justinh-rahb/klipper-micro](https://github.com/justinh-rahb/klipper-micro) is a
+native ESP-IDF app running on this exact board, and it drives an unmodified
+Klipper MCU over **UART2 on TX=GPIO22, RX=GPIO27 at 250000 baud**
+(`src/klipper_client.c:20-23`) — the same assignment used here, at 2× the baud
+rate we need. The CN1 wiring below is proven, not inferred.
+
+The board allocates nearly every other pin. Cross-checked against two
+independent pinouts (Random Nerd Tutorials, Mischianti) and klipper-micro's
+`src/board.c`:
 
 | Function | GPIO |
 | --- | --- |
@@ -204,9 +212,31 @@ OTA anyway.
 Remaining large statics, if headroom ever gets tight: `g_menu_meta` (11,312 B),
 `s_configDoc` (8,232 B), `s_configRx` (8,202 B), `g_menu_cache` (2,432 B).
 
-Software stack: LVGL 8.x + `TFT_eSPI` (or `LovyanGFX`), partial framebuffer
-(no PSRAM), driving a generic tree renderer over `menu_meta`/`menu_cache` rather
-than hand-built screens.
+### Display config worth reusing
+
+Board constants from a working ILI9341 + XPT2046 + LVGL bring-up on this
+hardware, so display bring-up doesn't rediscover them:
+
+- LCD on SPI2, touch on SPI3. Both SPI hosts get consumed; UART is unaffected.
+- **Don't rely on PENIRQ** (GPIO36) — it varies across CYD revisions. Poll
+  pressure over SPI instead.
+- Rotation: `swap_xy` only. Adding `mirror_x` after the swap flips the
+  landscape image top-to-bottom.
+- Panel is BGR 16bpp, and LVGL must render RGB565 **byte-swapped** — SPI takes
+  MSB first while LVGL's RGB565 is little-endian on ESP32.
+- Touch: raw range roughly 250..3850; after the driver's own scaling, map
+  x 15..226 and y 20..301 onto 240/320.
+- Partial render, 20 lines → 320×20×2 = 12,800 bytes of DMA-capable internal
+  RAM. Pixel clock 24 MHz.
+
+Software stack: LVGL + a generic tree renderer over `menu_meta`/`menu_cache`
+rather than hand-built screens.
+
+One thing to sanity-check during bring-up: bringing WiFi up has been seen to
+leave the XPT2046 unresponsive on plain-ESP32 CYD hardware — though only under a
+prebuilt MicroPython LVGL image, never retested on ESP-IDF or Arduino. Worth
+five minutes of confirmation before building on it, since this project needs the
+radio and the panel at the same time.
 
 ## 5. Sequence
 
@@ -223,8 +253,8 @@ than hand-built screens.
 - [ ] **Bench bring-up** — flash it, confirm Hello/telemetry/menu over UART
       against the real RP2040 on GPIO22/27. Nothing below is worth doing until
       the UART link is proven on hardware.
-- [ ] **Display bring-up** — LVGL + TFT_eSPI, XPT2046 touch calibration stored
-      in NVS.
+- [ ] **Display bring-up** — LVGL + the board constants above; store touch
+      calibration in NVS. Confirm touch still responds with WiFi up.
 - [ ] **Touch GUI** — same tree renderer as the web UI, tuned for 320×240.
 - [ ] **Touch/web parity** — the touch GUI should drive the same endpoints so
       there is one control path, not two.
@@ -248,5 +278,6 @@ Not submodules — cloned alongside this repo for reading:
 | `pavluchenkor/iDryer-Unit` | `../iDryer-Unit` | Hardware, CAD, assembly (209 MB) |
 | `pavluchenkor/iDryerController` | `../iDryerController` | v1 controller firmware |
 | `justinh-rahb/iHeater-Remote` | `../iHeater-Link` | The de-cloud pattern being copied |
+| `justinh-rahb/klipper-micro` | `../klipper-micro` | Unrelated project, but a working CYD bring-up — source of the pin, rotation and touch-calibration constants above |
 
 `iDryerControllerV2` and `idryer-core` *are* submodules — see §2.
