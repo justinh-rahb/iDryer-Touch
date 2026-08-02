@@ -1,0 +1,8 @@
+[submodule "lib/idryer-core"]
+	path = lib/idryer-core
+	url = https://github.com/pavluchenkor/idryer-core.git
+	branch = main
+[submodule "vendor/iDryerControllerV2"]
+	path = vendor/iDryerControllerV2
+	url = https://github.com/pavluchenkor/iDryerControllerV2.git
+	branch = main
