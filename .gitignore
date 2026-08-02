@@ -26,3 +26,5 @@ commit-message-map.json
 commit-message-raw-response.json
 prepare-commit-messages.mjs
 apply-commit-messages.mjs
+# Device flash backups — never commit (may contain WiFi creds, keys, calibration)
+backup/

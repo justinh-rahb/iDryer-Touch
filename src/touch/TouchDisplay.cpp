@@ -27,7 +27,13 @@ namespace {
 
 constexpr char kPrefsNamespace[] = "idryer-touch";
 constexpr char kCalibKey[]       = "tcal";
+constexpr char kCalibRotKey[]    = "tcalrot";
 constexpr char kBacklightKey[]   = "bl";
+
+// Landscape. 1 and 3 are the two landscape orientations; 3 puts the USB and
+// header connectors at the bottom, which is right way up on this board — 1 gave
+// an upside-down image on hardware.
+constexpr uint8_t kRotation = 3;
 
 // LVGL renders in horizontal slices rather than a full framebuffer: 320x240x2
 // would be 150 KB and this chip has no PSRAM. 40 lines is 25.6 KB and leaves
@@ -148,15 +154,21 @@ void readTouch(lv_indev_drv_t *, lv_indev_data_t *data) {
 }
 
 // Stored calibration is 8 uint16 values (LovyanGFX's corner parameters).
+//
+// The stored rotation is checked alongside it. Calibration is measured in the
+// orientation that was active when it was taken, so changing kRotation silently
+// invalidates it — without this check, a rotation fix would leave a board
+// calibrated upside down and the touch targets mirrored.
 bool loadCalibration() {
     Preferences prefs;
     if (!prefs.begin(kPrefsNamespace, true)) return false;
     uint16_t data[8];
-    const size_t got = prefs.getBytes(kCalibKey, data, sizeof(data));
-    const uint8_t bl = prefs.getUChar(kBacklightKey, 80);
+    const size_t  got = prefs.getBytes(kCalibKey, data, sizeof(data));
+    const uint8_t rot = prefs.getUChar(kCalibRotKey, 0xFF);
+    const uint8_t bl  = prefs.getUChar(kBacklightKey, 80);
     prefs.end();
     if (bl >= 10 && bl <= 100) s_backlight = bl;
-    if (got != sizeof(data)) return false;
+    if (got != sizeof(data) || rot != kRotation) return false;
     s_lcd.setTouchCalibrate(data);
     return true;
 }
@@ -175,6 +187,7 @@ void runCalibration() {
     Preferences prefs;
     if (prefs.begin(kPrefsNamespace, false)) {
         prefs.putBytes(kCalibKey, data, sizeof(data));
+        prefs.putUChar(kCalibRotKey, kRotation);
         prefs.end();
     }
 }
@@ -184,7 +197,7 @@ void runCalibration() {
 bool begin() {
     if (!s_lcd.init()) return false;
 
-    s_lcd.setRotation(1);              // landscape, 320x240
+    s_lcd.setRotation(kRotation);      // landscape, 320x240
     s_lcd.fillScreen(0x0000);
     s_lcd.setBrightness(0);            // stay dark until something is drawn
 
