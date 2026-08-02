@@ -34,8 +34,17 @@ that already exists in `idryer-core`.
 - [ ] `clear_errors` command.
 - [ ] `profile` mode — multi-stage temperature ramps. `UartDryerMode::Profile` is
       decoded for display but cannot be started from either UI.
-- [ ] **Weights.** `setWeightsHandler` is never registered, so scale readings are
-      dropped. The dryer reports them and the hardware has load cells.
+- [ ] **Weights.** `setWeightsHandler` is never registered in the touch build, so
+      scale readings are dropped. The dryer reports them and the hardware has
+      load cells.
+- [ ] **`ignoreExternalCmd` is reported but ignored.** Protocol v2 adds it to the
+      Status payload. If the user has turned on the controller's "IGNOR EXT CMD"
+      menu toggle, it rejects Start/Stop/Find/ClearErrors and only lets
+      GetConfig through — both UIs would appear to work while every button did
+      nothing. Read the flag and say so on screen.
+- [ ] Protocol v2 adds `UartDryerMode::Heating` (5) and `LightAnimation` (6).
+      `TouchUi.cpp` clamps unknown modes to "Idle", so those two would display
+      wrongly. Add them to `kModes[]`.
 - [ ] **RFID.** `setRfidHandler` likewise — spool tag detection is not surfaced.
 - [ ] **Controller error log.** `onLog` prints to Serial only. These are the
       events a user most wants to see (sensor faults, over-temperature); they
