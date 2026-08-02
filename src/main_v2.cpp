@@ -1,3 +1,9 @@
+// Local-only builds (iDryer Touch) replace this entire translation unit with
+// src/touch/TouchApp.cpp — same pattern as iHeater-Remote's standalone target.
+// Keeping the guard here rather than deleting the cloud path keeps `upstream`
+// merges from pavluchenkor/iDryer-Link conflict-free.
+#if !defined(IDRYER_TOUCH_LOCAL)
+
 // iDryer Link v2 — UART bridge RP2040↔Cloud на базе idryer-core SDK.
 //
 // Архитектура: RP2040 (контроллер) <—UART→ ESP32 (этот файл) <—WiFi/MQTT→ Портал
@@ -28,9 +34,19 @@
 
 using namespace idryer;
 
-// ── Пины UART (ESP32-C3 Super Mini, JTAG-shared → требуют gpio_reset_pin) ──
-constexpr int UART_RX_PIN = 6;
-constexpr int UART_TX_PIN = 7;
+// ── Пины UART ────────────────────────────────────────────────────────────────
+// По умолчанию ESP32-C3 Super Mini (GPIO6/7, JTAG-shared → требуют gpio_reset_pin).
+// Переопределяются через build_flags — на CYD (ESP32-2432S028R) свободны только
+// GPIO22/27 (CN1) и GPIO35 (input-only, P3): см. docs/developer/TOUCH_PLAN.md.
+#ifndef IDRYER_UART_RX_PIN
+#define IDRYER_UART_RX_PIN 6
+#endif
+#ifndef IDRYER_UART_TX_PIN
+#define IDRYER_UART_TX_PIN 7
+#endif
+
+constexpr int UART_RX_PIN = IDRYER_UART_RX_PIN;
+constexpr int UART_TX_PIN = IDRYER_UART_TX_PIN;
 
 // ── SDK объекты ──────────────────────────────────────────────────────────────
 static const iDryer::Config CFG = {
@@ -598,3 +614,5 @@ void loop() {
         }
     }
 }
+
+#endif // !IDRYER_TOUCH_LOCAL
