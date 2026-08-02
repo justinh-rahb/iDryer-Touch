@@ -53,6 +53,9 @@
 #include "TouchApp.h"
 #include "TouchDashboard.h"
 #include "TouchLogo.h"
+#include "TouchState.h"
+#include "TouchDisplay.h"
+#include "TouchUi.h"
 
 using namespace idryer;
 
@@ -781,6 +784,46 @@ void configureRoutes() {
 
 } // namespace
 
+// ── Seam for the touch UI (see TouchState.h) ─────────────────────────────────
+
+DeviceView deviceView() {
+    DeviceView v;
+    v.mcuConnected = s_mcuConnected;
+    v.apMode       = s_apMode;
+    v.unitsCount   = s_unitsCount;
+    v.menuRevision = g_menu_cache.revision;
+
+    const String ip   = localIpString();
+    const String ssid = s_apMode ? s_apSsid : WiFi.SSID();
+    strncpy(v.ip,        ip.c_str(),   sizeof(v.ip) - 1);
+    strncpy(v.ssid,      ssid.c_str(), sizeof(v.ssid) - 1);
+    strncpy(v.mcuSerial, s_mcuSerial,  sizeof(v.mcuSerial) - 1);
+    strncpy(v.firmware,  VERSION_STR,  sizeof(v.firmware) - 1);
+
+    for (uint8_t i = 0; i < kMaxUnits; i++) {
+        v.units[i].airTempC    = s_units[i].airTempC;
+        v.units[i].airHumidity = s_units[i].airHumidity;
+        v.units[i].heaterPower = s_units[i].heaterPower;
+        v.units[i].targetTempC = s_units[i].targetTempC;
+        v.units[i].fanOn       = s_units[i].fanOn;
+        v.units[i].mode        = s_units[i].mode;
+        v.units[i].durationS   = s_units[i].durationS;
+        v.units[i].elapsedS    = s_units[i].elapsedS;
+    }
+    return v;
+}
+
+void cmdStartDrying(uint8_t unit, int tempC, uint32_t minutes) {
+    if (unit < kMaxUnits) sendStart(UartDryerMode::Drying, unit, tempC, minutes);
+}
+void cmdStartStorage(uint8_t unit, int tempC, uint32_t humidityPct) {
+    if (unit < kMaxUnits) sendStart(UartDryerMode::Storage, unit, tempC, humidityPct);
+}
+void cmdStop(uint8_t unit) {
+    if (unit < kMaxUnits) sendStop(unit);
+}
+void cmdRequestConfig() { requestConfig(); }
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 void setup() {
@@ -809,6 +852,15 @@ void setup() {
     s_uart.setStatusHandler(onStatus);
     s_uart.setConfigChunkHandler(onConfigChunk);
     s_uart.setLogHandler(onLog);
+
+    // Panel last: a failure here must not cost the web UI or the UART bridge,
+    // which are what make the device usable in the first place.
+    if (display::begin()) {
+        ui::begin();
+        Serial.println("[TOUCH] display ready");
+    } else {
+        Serial.println("[TOUCH] display init FAILED — continuing headless");
+    }
 
     Serial.printf("[TOUCH] Web UI: http://%s/  (UART rx=%d tx=%d)\n",
                   localIpString().c_str(), kUartRxPin, kUartTxPin);
@@ -850,6 +902,10 @@ void loop() {
     }
 
     pushStatusIfChanged();
+
+    ui::tick();
+    display::loop();
+
     delay(2);
 }
 

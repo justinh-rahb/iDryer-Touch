@@ -229,8 +229,20 @@ hardware, so display bring-up doesn't rediscover them:
 - Partial render, 20 lines → 320×20×2 = 12,800 bytes of DMA-capable internal
   RAM. Pixel clock 24 MHz.
 
-Software stack: LVGL + a generic tree renderer over `menu_meta`/`menu_cache`
-rather than hand-built screens.
+Software stack is LVGL 8 + LovyanGFX (configured in code, so TFT_eSPI's
+`User_Setup.h` global macros never fight PlatformIO's dependency finder).
+
+**Touch calibration runs on first boot** — a resistive panel is unusable without
+it. The four corner targets appear if NVS holds no calibration, and the result is
+stored; Info → BACKLIGHT is a manual redo hook.
+
+Static RAM is 70,644 bytes, but the runtime figure is higher: the LVGL draw
+buffer is 320×40×2 = 25,600 bytes of DMA-capable internal RAM allocated at
+`display::begin()`, plus LVGL's own heap for objects and styles. A full
+framebuffer would be 150 KB and there is no PSRAM, hence partial rendering.
+
+The touch UI deliberately does **not** render the menu tree — see the sizing
+notes in `src/touch/TouchUi.cpp`.
 
 One thing to sanity-check during bring-up: bringing WiFi up has been seen to
 leave the XPT2046 unresponsive on plain-ESP32 CYD hardware — though only under a
@@ -250,12 +262,12 @@ radio and the panel at the same time.
       fallback with captive portal, `/setup` Wi-Fi form, `/fw` OTA upload.
       Restructured for the dryer (per-unit telemetry cards, drying/storage
       controls, generic menu-tree browser). Cost: ~44 KB flash, ~0.8 KB RAM.
+- [x] **Display + touch GUI written** — LovyanGFX board class, LVGL 8 bindings,
+      and five screens (home / dry / store / info / no-link). Compiles at 63.9%
+      flash. Untested on hardware.
 - [ ] **Bench bring-up** — flash it, confirm Hello/telemetry/menu over UART
-      against the real RP2040 on GPIO22/27. Nothing below is worth doing until
-      the UART link is proven on hardware.
-- [ ] **Display bring-up** — LVGL + the board constants above; store touch
-      calibration in NVS. Confirm touch still responds with WiFi up.
-- [ ] **Touch GUI** — same tree renderer as the web UI, tuned for 320×240.
+      against the real RP2040 on GPIO22/27, then that the panel initialises,
+      touch calibrates, and touch still responds with WiFi up.
 - [ ] **Touch/web parity** — the touch GUI should drive the same endpoints so
       there is one control path, not two.
 
