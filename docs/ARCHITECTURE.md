@@ -259,11 +259,15 @@ framebuffer would be 150 KB and there is no PSRAM, hence partial rendering.
 The touch UI deliberately does **not** render the menu tree — see the sizing
 notes in `src/touch/TouchUi.cpp`.
 
-One thing to sanity-check during bring-up: bringing WiFi up has been seen to
-leave the XPT2046 unresponsive on plain-ESP32 CYD hardware — though only under a
-prebuilt MicroPython LVGL image, never retested on ESP-IDF or Arduino. Worth
-five minutes of confirmation before building on it, since this project needs the
-radio and the panel at the same time.
+A WiFi/touch coexistence problem had been reported on plain-ESP32 CYD hardware
+under a prebuilt MicroPython LVGL image. **It does not reproduce here.** With
+this firmware the SoftAP and captive portal run while touch calibration and UI
+navigation both work, so the radio and the panel coexist fine under Arduino and
+there is no reason to move to ESP32-S3.
+
+Verified on hardware: rotation **3** (1 is upside down on this board), SPI at
+**40 MHz** with no artifacts, and touch calibration persisting in NVS across a
+reflash.
 
 ## 5. Sequence
 

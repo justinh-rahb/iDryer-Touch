@@ -5,25 +5,29 @@ is worth much until that section is done.
 
 ## Hardware bring-up — blocking
 
-Nothing in this repo has been flashed to a board. Everything below is written,
-compiles, and is unverified.
+Flashed and running on an ESP32-D0WD-V3 CYD (MAC b0:cb:d8:da:f5:90). The panel
+half is verified; the controller half is not, because no dryer is attached yet.
 
-- [ ] **UART link.** Confirm Hello / telemetry / status / menu against the real
-      RP2040 on CN1 (TX=GPIO22, RX=GPIO27). The pins are proven on this board by
-      another project, but not with *this* firmware or the iDryer's controller.
-- [ ] **Panel init.** SPI is set to 40 MHz in `TouchDisplay.cpp`; 24 MHz is the
-      value proven on this hardware. Drop back if there is speckle or tearing.
-- [ ] **Touch orientation.** `offset_rotation` is 0 against display rotation 1.
-      If the axes come out swapped or inverted, that constant is the knob.
-- [ ] **Touch calibration flow.** Runs automatically when NVS holds none. Verify
-      the corner targets are reachable and the stored result survives a reboot.
-- [ ] **WiFi + touch together.** Bringing WiFi up has been seen to leave the
-      XPT2046 unresponsive on plain-ESP32 CYD hardware — under a prebuilt
-      MicroPython LVGL image, never retested on Arduino. This firmware needs both
-      at once, so confirm early.
+- [x] ~~Panel init.~~ Boots and draws at **40 MHz** SPI — no need to fall back to
+      the 24 MHz that was known-good elsewhere.
+- [x] ~~Touch orientation.~~ `setRotation(1)` came up upside down; `3` is correct
+      for this board. Calibration now stores the rotation it was taken in and
+      forces a redo when it changes.
+- [x] ~~Touch calibration flow.~~ Corner targets reachable, result persists in
+      NVS across a reflash, and correctly does *not* re-run on later boots.
+- [x] ~~**WiFi + touch together.**~~ **Does not reproduce on Arduino.** The AP is
+      up (captive portal serving) while touch calibration and UI navigation both
+      work. The MicroPython-era finding was specific to that image; plain-ESP32
+      CYD hardware is fine here, and no move to ESP32-S3 is needed.
+- [ ] **UART link.** Still unverified — no dryer attached. Confirm Hello /
+      telemetry / status / menu against the real RP2040 on CN1 (TX=GPIO22,
+      RX=GPIO27). Hello is going out at 94 bytes, which is the protocol-v2 size,
+      so the core repin is live.
 - [ ] Check free heap after `display::begin()` — the LVGL draw buffer is 25.6 KB
-      of DMA-capable internal RAM on top of 70.6 KB static, and WiFi wants its
+      of DMA-capable internal RAM on top of 70.7 KB static, and WiFi wants its
       own.
+- [ ] Web UI has not been exercised on-device yet; the AP comes up but nothing
+      has connected to it.
 
 ## Controller features not surfaced
 

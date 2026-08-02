@@ -35,6 +35,11 @@ constexpr char kBacklightKey[]   = "bl";
 // an upside-down image on hardware.
 constexpr uint8_t kRotation = 3;
 
+// How long to wait for a first touch before deciding the panel has none.
+// Generous: this only runs on a fresh board or after a rotation change, and the
+// cost of guessing wrong is an uncalibrated screen until the next boot.
+constexpr uint32_t kCalibrationProbeMs = 30000;
+
 // LVGL renders in horizontal slices rather than a full framebuffer: 320x240x2
 // would be 150 KB and this chip has no PSRAM. 40 lines is 25.6 KB and leaves
 // the SPI DMA comfortably fed.
@@ -173,13 +178,39 @@ bool loadCalibration() {
     return true;
 }
 
-void runCalibration() {
-    s_lcd.fillScreen(lv_color_hex(0x090d14).full ? 0x0000 : 0x0000);
-    s_lcd.setTextColor(0xFFFFFFU, 0x090D14U);
+// Returns false if the panel never reported a touch, so the caller can carry on
+// without calibration rather than stranding the device.
+//
+// calibrateTouch() blocks until all four corners are tapped, and it runs from
+// setup(). If touch is dead — bad panel, wrong pins, a revision whose XPT2046
+// does not answer — that block never ends, loop() never starts, and the web
+// server that was already listening never gets to serve a request. A broken
+// touch panel must cost the touch UI and nothing else, so probe first.
+bool runCalibration() {
+    s_lcd.fillScreen(0x0000);
+    s_lcd.setTextColor(0xFFFFFFU, 0x000000U);
     s_lcd.setTextDatum(textdatum_t::middle_center);
-    s_lcd.drawString("Touch the corners", kWidth / 2, kHeight / 2 - 12);
-    s_lcd.drawString("to calibrate",      kWidth / 2, kHeight / 2 + 10);
-    delay(900);
+    s_lcd.drawString("Touch the screen", kWidth / 2, kHeight / 2 - 12);
+    s_lcd.drawString("to calibrate",     kWidth / 2, kHeight / 2 + 10);
+
+    // Wait for one touch before committing to the blocking corner sequence.
+    const uint32_t deadline = millis() + kCalibrationProbeMs;
+    bool sawTouch = false;
+    while ((int32_t)(millis() - deadline) < 0) {
+        int32_t x, y;
+        if (s_lcd.getTouch(&x, &y)) { sawTouch = true; break; }
+        delay(20);
+    }
+
+    if (!sawTouch) {
+        s_lcd.fillScreen(0x0000);
+        s_lcd.drawString("Touch not detected", kWidth / 2, kHeight / 2 - 12);
+        s_lcd.drawString("use the web UI",     kWidth / 2, kHeight / 2 + 10);
+        Serial.println("[TOUCH] no touch during calibration probe — skipping, "
+                       "display stays read-only");
+        delay(1500);
+        return false;
+    }
 
     uint16_t data[8];
     s_lcd.calibrateTouch(data, 0x5BA9FFU, 0x090D14U, 18);
@@ -190,6 +221,7 @@ void runCalibration() {
         prefs.putUChar(kCalibRotKey, kRotation);
         prefs.end();
     }
+    return true;
 }
 
 } // namespace
