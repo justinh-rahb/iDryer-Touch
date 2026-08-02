@@ -37,7 +37,7 @@ using namespace idryer;
 // ── Пины UART ────────────────────────────────────────────────────────────────
 // По умолчанию ESP32-C3 Super Mini (GPIO6/7, JTAG-shared → требуют gpio_reset_pin).
 // Переопределяются через build_flags — на CYD (ESP32-2432S028R) свободны только
-// GPIO22/27 (CN1) и GPIO35 (input-only, P3): см. docs/developer/TOUCH_PLAN.md.
+// GPIO22/27 (CN1) и GPIO35 (input-only, P3): см. docs/ARCHITECTURE.md.
 #ifndef IDRYER_UART_RX_PIN
 #define IDRYER_UART_RX_PIN 6
 #endif

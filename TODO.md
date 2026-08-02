@@ -87,8 +87,14 @@ that already exists in `idryer-core`.
 
 ## Repo hygiene
 
-- [ ] `README.ru.md` and most of `docs/` still describe upstream's cloud product
-      — portal accounts, the mobile app, the web flasher. Prune or port.
+- [x] ~~Upstream's cloud-era docs still shipped.~~ Removed: portal onboarding,
+      staging access, flasher-portal build scripts, the private/public repo
+      workflow, and index pages pointing at the deleted `idryer-protocol`
+      submodule. The RJ45 diagrams are kept — the controller side is unchanged.
+- [ ] **The two upstream RJ45 diagrams disagree.** The controller schematic puts
+      UART on pins 4/6 with ground on 7; `wiring.png` maps colours to pins 3/5
+      with ground on 8. Resolve with a meter before first power-up and correct
+      whichever diagram is wrong.
 - [ ] `extra_scripts/post_build.py` copies firmware to a flasher-portal path that
       is irrelevant here. The CYD env skips it, but it still runs for the
       inherited ESP32-C3 environments.

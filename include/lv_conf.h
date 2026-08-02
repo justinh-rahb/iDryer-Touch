@@ -7,6 +7,11 @@
 
 #pragma once
 
+// LVGL checks for this macro to decide whether the include actually landed, and
+// warns "Possible failure to include lv_conf.h" without it — #pragma once alone
+// is not enough. The include was working regardless, but the warning is noise.
+#define LV_CONF_H
+
 #include <stdint.h>
 
 // ── Colour ───────────────────────────────────────────────────────────────────
@@ -54,7 +59,7 @@
 // ── Widgets ──────────────────────────────────────────────────────────────────
 // The UI is labels, buttons and one bar. Everything below defaults to enabled,
 // so switching the unused ones off is worth a sizeable chunk of flash. Text
-// entry is deliberately absent — see docs/developer/TOUCH_PLAN.md.
+// entry is deliberately absent — see docs/ARCHITECTURE.md.
 #define LV_USE_ANIMIMG        0
 #define LV_USE_ARC            0
 #define LV_USE_CALENDAR       0

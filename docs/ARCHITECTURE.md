@@ -67,7 +67,7 @@ in favour of the `idryer-core` symlink — there was nothing to recurse into.
 **The menu mirror is committed, not regenerated per build.** Upstream's
 `copy_menu.py` refreshes `lib/idryer-menu/src/` from the `config-exmple/menu`
 symlink on every build. Restoring that symlink against the public controller repo
-silently changed `VERSION_MAJOR` 1 → 2 — and per [TODO.md](../../TODO.md) that is
+silently changed `VERSION_MAJOR` 1 → 2 — and per [TODO.md](../TODO.md) that is
 the Link↔RP2040 UART compatibility marker — plus it renamed menu ids
 (`MENU_CMD_IGNORE_EXTERNAL` → `MENU_IGNORE_EXTERNAL_CMD`). The public
 `iDryerControllerV2` repo is a **single squashed commit at v2.0.0** with no v1.x

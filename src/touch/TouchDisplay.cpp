@@ -1,7 +1,7 @@
 // Board bring-up for the ESP32-2432S028R ("Cheap Yellow Display").
 //
 // Pin, rotation and colour constants are taken from a working bring-up on this
-// exact board — see docs/developer/TOUCH_PLAN.md. The two that cost the most
+// exact board — see docs/ARCHITECTURE.md. The two that cost the most
 // time to rediscover:
 //
 //   * PENIRQ is deliberately NOT wired (pin_int = -1). It varies across CYD

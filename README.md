@@ -1,7 +1,7 @@
 # iDryer Touch
 
-A cloud-free fork of [iDryer Link](https://github.com/pavluchenkor/iDryer-Link) that
-puts a local web UI — and, in progress, a touchscreen — on an iDryer.
+A cloud-free fork of [iDryer Link](https://github.com/pavluchenkor/iDryer-Link)
+that puts a local web UI and a touchscreen on an iDryer.
 
 No portal account, no MQTT broker, no TLS, no device claiming. The firmware talks
 to the dryer's RP2040 controller over UART and serves everything itself on your
@@ -23,12 +23,17 @@ applied to the dryer.
 - **Wi-Fi setup** — joins your network, or falls back to an `iDryer Touch XXXX`
   access point with a captive portal.
 - **Local OTA** — upload firmware from the browser. A/B partitions, no cloud.
-- **Touch GUI on an ESP32 CYD** — planned, not built. See
-  [the plan](docs/developer/TOUCH_PLAN.md).
+- **Touch GUI** on the ESP32 CYD — five LVGL screens sized for a resistive
+  panel: status, start drying, start storage, device info, and a no-link state.
 
-The stock 1.3" OLED and jog wheel keep working. The web UI and the eventual touch
-GUI are *additional* clients of the controller's menu, not replacements — no
+The stock 1.3" OLED and jog wheel keep working. The web UI and the touch GUI are
+*additional* clients of the controller's menu, not replacements — no
 iDryerControllerV2 firmware changes are required.
+
+The touch panel deliberately does less than the web UI: one unit at a time, big
+steppers instead of sliders or a keypad, and no 202-item menu tree. On a 320×240
+resistive screen those are the things that do not work, and the jog wheel already
+covers them.
 
 ## Hardware
 
@@ -50,8 +55,24 @@ which runs UART2 on GPIO22/27 at 250000 baud:
 Power the board from the RJ45's 5V into `P1` VIN. `P1`'s TX/RX are wired to the
 CH340 — use that header for power only.
 
+### Controller side
+
 The RJ45 on the dryer is **power and UART, not Ethernet**. Do not plug it into a
-switch or router.
+switch or router. From the controller schematic
+([port-wiring.png](docs/img/port-wiring.png)), per port:
+
+| RJ45 pin | Signal | Goes to |
+| --- | --- | --- |
+| 2 | +5V | CYD `P1` VIN |
+| 7 | GND | CYD `P1` GND |
+| 4 | controller RXD | CYD GPIO22 (our TX) |
+| 6 | controller TXD | CYD GPIO27 (our RX) |
+
+> **Verify with a meter before powering anything.** Upstream ships two diagrams
+> that do not agree: the schematic puts UART on pins 4/6 and ground on 7, while
+> [wiring.png](docs/img/wiring.png) maps the colours to pins 3/5 with ground on
+> 8 (against the T568B order in [RJ45.png](docs/img/RJ45.png)). Multi-unit
+> dryers have one RJ45 per unit. Getting +5V onto a GPIO ends the board.
 
 Pins are build flags (`IDRYER_UART_TX_PIN` / `IDRYER_UART_RX_PIN`), so other
 boards only need a new environment.
@@ -69,7 +90,7 @@ scripts/build.sh cyd-2432s028r
 `bootstrap.sh` initialises submodules and verifies the dependency layout — upstream
 ships two symlinks pointing into the original author's home directory, so a plain
 `git clone` of the parent project cannot build. See
-[TOUCH_PLAN.md §2](docs/developer/TOUCH_PLAN.md) for what was replaced and why
+[ARCHITECTURE.md §2](docs/ARCHITECTURE.md) for what was replaced and why
 `idryer-core` is pinned to an exact commit rather than a branch.
 
 Other useful invocations:
@@ -120,7 +141,7 @@ must never be assembled in one buffer — see the note on `menu_buildFullJson` i
 | `lib/idryer-core` | Submodule, pinned — upstream's platform library |
 | `lib/idryer-menu/` | Committed mirror of the controller's menu metadata |
 | `vendor/iDryerControllerV2` | Submodule — controller firmware, reference + menu source |
-| `docs/developer/TOUCH_PLAN.md` | Architecture, findings, and what's left |
+| `docs/ARCHITECTURE.md` | Architecture, findings, and what's left |
 
 The cloud path is guarded rather than deleted, so merges from `upstream` stay
 clean. Upstream's ESP32-C3 environments still build unchanged.
@@ -134,5 +155,7 @@ clean. Upstream's ESP32-C3 environments still build unchanged.
 - The web layer is adapted from
   [iHeater Remote](https://github.com/justinh-rahb/iHeater-Remote).
 
-Upstream's own documentation is kept under [docs/](docs/) and still describes the
-cloud product.
+Upstream's cloud-era documentation (portal onboarding, staging access, the
+flasher-portal build scripts) has been removed — none of it applies here. The
+RJ45 diagrams under [docs/img/](docs/img/) are kept because the controller side
+is unchanged.
