@@ -79,6 +79,16 @@ boards only need a new environment.
 
 ## Build
 
+A full clone is ~230 MB — upstream committed a PlatformIO toolchain early on
+(`.pio-home/`, ~450 MB of compilers and caches) and removed it two commits later,
+so it lives in history forever. Nothing needs that history:
+
+```bash
+git clone --depth 1 --recurse-submodules https://github.com/justinh-rahb/iDryer-Touch.git
+```
+
+Then:
+
 ```bash
 scripts/bootstrap.sh
 ```

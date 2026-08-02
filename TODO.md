@@ -100,6 +100,12 @@ that already exists in `idryer-core`.
       inherited ESP32-C3 environments.
 - [ ] Decide whether to keep upstream's C3/S3 environments at all, or drop them
       once this fork stops tracking `upstream`.
+- [ ] **Clones are ~230 MB.** Upstream's initial commit carried `.pio-home/` — a
+      whole PlatformIO toolchain, ~450 MB of blobs — and removed it in
+      `49b1421`, so it is permanent in history. Purging it needs a rewrite of
+      *upstream's* commits, which destroys the shared ancestry that makes
+      `git merge upstream/main` cheap. Deliberately not done; `--depth 1` is the
+      workaround. Revisit only if this fork stops tracking upstream.
 
 ## Inherited from upstream
 
