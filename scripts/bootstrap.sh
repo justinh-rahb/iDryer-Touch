@@ -29,11 +29,11 @@ warn()  { printf '\033[0;33m  !!\033[0m %s\n' "$*" >&2; }
 die()   { printf '\033[0;31m  XX\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ── Submodules ───────────────────────────────────────────────────────────────
-# NOTE: idryer-core is pinned to an exact commit, not a branch tip. The Link
-# firmware tracks core's API by date, and core's main has since removed fields
-# main_v2.cpp still uses (Config::hasHeaterPower, Telemetry::weightG). Never run
-# `git submodule update --remote` here — it will jump core to HEAD and break the
-# build. Re-pin deliberately, and fix main_v2.cpp in the same commit.
+# NOTE: idryer-core is pinned to an exact commit, not a branch tip. It must stay
+# on a revision whose UART contract matches the controller firmware the dryer is
+# running — the bridge validates payload length by exact equality, so a version
+# skew silently drops whole frame types rather than degrading. Re-pin
+# deliberately, and re-check UART_PROTOCOL_VER when you do.
 if [[ $CHECK_ONLY -eq 0 ]]; then
   info "Initializing submodules (recursive)"
   git submodule update --init --recursive

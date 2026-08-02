@@ -52,10 +52,10 @@ constexpr int UART_TX_PIN = IDRYER_UART_TX_PIN;
 static const iDryer::Config CFG = {
     .deviceType        = iDryer::DeviceType::Dryer,
     .unitsCount        = 1,  // реальное число физических юнитов на этом железе; уточняется из Hello RP2040
-    .hasHeaterPower    = true,
-    .hasFanStatus      = true,
+    .hasHeater         = true,
+    .hasFan            = true,
     .hasLed            = false,
-    .hasScales         = true,
+    .hasWeight         = true,
     .hasRfid           = true,
     .hasAirTemp        = true,
     .hasAirHumidity    = true,
@@ -311,12 +311,22 @@ static void onStatus(const UartStatusPayload& p, const UartFrameHeader&) {
     s_link.publishStatusNow();
 }
 
+// Telemetry::weightG was dropped in idryer-core when weights moved to their own
+// topic (core 5798629). Publish directly instead of staging it in telemetry.
 static void onWeights(const UartWeightsPayload& p, const UartFrameHeader&) {
+    if (p.count == 0) return;
+    StaticJsonDocument<192> doc;
+    JsonArray arr = doc.createNestedArray("weights");
     for (uint8_t i = 0; i < p.count && i < iDryer::MAX_UNITS; i++) {
         const auto& w = p.weights[i];
-        if (w.unitId < iDryer::MAX_UNITS)
-            s_link.telemetry.weightG[w.unitId] = w.weightGramsC10 / 10u;
+        if (w.unitId >= iDryer::MAX_UNITS) continue;
+        JsonObject o = arr.createNestedObject();
+        char uid[4];
+        snprintf(uid, sizeof(uid), "U%u", w.unitId + 1);
+        o["unitId"]  = uid;
+        o["weightG"] = w.weightGramsC10 / 10u;
     }
+    s_link.devicePublisher()->publishWeights(doc);
 }
 
 // RP2040 шлёт JSON меню фрагментами. ConfigReceiver склеивает, потом публикуем.

@@ -81,11 +81,26 @@ running that with `--apply`, confirm what firmware your dryer's RP2040 actually
 runs — a mismatched mirror means Link and the hardware disagree about what menu
 item 189 means.
 
-**`idryer-core` is pinned to `6cbc8ab`, not a branch tip.** Link's `main`
-(2026-05-24) predates two breaking core changes (2026-05-29 `Telemetry::weightG`
-removed, 2026-05-30 `Config::hasHeaterPower` renamed). Building against core
-`main` fails. Never `git submodule update --remote`; re-pin deliberately and fix
-`main_v2.cpp` in the same commit.
+**`idryer-core` is pinned to `d3df6af` (UART protocol v2).** The pin must match
+the UART contract of the controller firmware the dryer runs, because
+`UartBridge::validateLength` compares payload length by *exact equality*: a
+version skew does not degrade, it silently drops whole frame types.
+
+The first pin here was `6cbc8ab` (protocol v1), chosen because `main_v2.cpp` —
+upstream's cloud bridge — referenced `Config::hasHeaterPower` and
+`Telemetry::weightG`, which core later renamed and removed. That was the wrong
+consumer to pin for. Against a v2.0.0 controller it would have failed like this:
+
+| Frame | v1 | v2 | Result on a v2 controller |
+| --- | ---: | ---: | --- |
+| Hello | 86 | 94 | rejected — MCU never detected |
+| Status | 133 | 134 | rejected — mode/target/progress never update |
+| Telemetry | 29 | 29 | accepted |
+
+So temperature and humidity would have updated live while the UI insisted the
+controller was missing — the worst kind of half-working. `main_v2.cpp` was
+instead updated for the renamed fields (`hasHeater`, `hasFan`, `hasWeight`, and
+weights published through `publishWeights` rather than staged in telemetry).
 
 Setup and build:
 
