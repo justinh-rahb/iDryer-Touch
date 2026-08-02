@@ -73,10 +73,15 @@ that already exists in `idryer-core`.
 
 ## Build and CI
 
-- [ ] **CI has never run.** GitHub disables Actions on forks by default; enable
-      it and confirm the matrix passes before trusting it.
+- [x] ~~CI has never run.~~ All five matrix jobs pass on PR #1; artifacts upload.
 - [ ] `release.yml` is entirely untested — merged factory image, per-chip
-      bootloader offsets and release notes are all unexercised.
+      bootloader offsets and release notes are all unexercised. It only fires on
+      a `v*` tag, so it stays unproven until the first release.
+- [ ] CI actions emit a Node 20 deprecation warning (`checkout@v4`, `cache@v4`,
+      `setup-python@v5`, `upload-artifact@v4`). Harmless now; bump when v5/v6
+      land.
+- [ ] Artifacts are ~8-10 MB per target because the whole build directory's
+      `.elf` goes up. Fine, but trim if it ever matters.
 - [ ] `min_spiffs.csv` leaves ~124 KB of filesystem that nothing uses. Either use
       it (touch calibration backup, controller error ring buffer) or reclaim it.
 
