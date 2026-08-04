@@ -425,6 +425,8 @@ String statusJson() {
     doc["otaOk"]                = s_otaOk;
     doc["otaBytesWritten"]      = s_otaBytesWritten;
     doc["otaError"]             = s_otaError;
+    doc["screenTimeoutS"]       = display::screenTimeout();
+    doc["screenAsleep"]         = display::asleep();
     doc["menuRevision"]         = g_menu_cache.revision;
     doc["unitsCount"]           = s_unitsCount;
 
@@ -484,9 +486,42 @@ void handleLogo() {
                     reinterpret_cast<const char *>(kTouchLogoPng), kTouchLogoPngLen);
 }
 
+// Idle-blanking choices. Values are seconds; 0 means never blank.
+String screenTimeoutOptions() {
+    static const uint16_t kValues[]  = {0, 15, 30, 60, 120, 300, 600, 1800};
+    static const char*    kLabels[]  = {"Never", "15 seconds", "30 seconds",
+                                        "1 minute", "2 minutes", "5 minutes",
+                                        "10 minutes", "30 minutes"};
+    const uint16_t current = display::screenTimeout();
+    String out;
+    for (size_t i = 0; i < sizeof(kValues) / sizeof(kValues[0]); i++) {
+        out += "<option value=\"" + String(kValues[i]) + "\"";
+        if (kValues[i] == current) out += " selected";
+        out += ">" + String(kLabels[i]) + "</option>";
+    }
+    return out;
+}
+
+void handleDisplayPost() {
+    if (!s_server.hasArg("timeout")) {
+        s_server.send(400, "text/plain", "Missing timeout.");
+        return;
+    }
+    const long seconds = s_server.arg("timeout").toInt();
+    if (seconds < 0 || seconds > 3600) {
+        s_server.send(400, "text/plain", "Timeout must be 0-3600 seconds.");
+        return;
+    }
+    display::setScreenTimeout((uint16_t)seconds);
+    Serial.printf("[TOUCH] screen timeout = %lds\n", seconds);
+    s_server.sendHeader("Location", "/setup", true);
+    s_server.send(303, "text/plain", "Saved");
+}
+
 void handleSetupPage() {
     if (captiveRedirectIfNeeded()) return;
-    String page = R"HTML(<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><link rel=icon type=image/png href="/logo.png"><title>iDryer Touch setup</title><style>:root{color-scheme:dark;--bg:#090d14;--p:#101722;--l:#29384b;--t:#eaf1fa;--m:#91a2b8;--a:#5ba9ff;font-family:system-ui,sans-serif}body{margin:0;background:var(--bg);color:var(--t)}main{max-width:620px;margin:auto;padding:24px 15px}.card{background:var(--p);border:1px solid var(--l);border-radius:12px;padding:16px;margin:14px 0}.logo{display:flex;align-items:center;gap:10px;font-size:24px;font-weight:800;letter-spacing:-1px}.logo img{width:40px;height:40px;border-radius:9px}h1{font-size:23px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--m)}label{display:grid;gap:6px;margin:12px 0;color:var(--m);font-size:13px}input,button{box-sizing:border-box;width:100%;min-height:43px;border-radius:8px;border:1px solid #38506b;background:#0c131d;color:var(--t);font:inherit;padding:0 10px}button{background:#1d5d99;border-color:#69b4ff;font-weight:700;margin-top:8px;cursor:pointer}button.sec{background:#202a38;border-color:#38506b}.note{font-size:13px;line-height:1.45;color:var(--m)}a{color:var(--a)}</style><main><p><a href="/">&larr; Dashboard</a></p><div class=logo><img src="/logo.png" alt="iDryer" width=40 height=40>iDryer Touch</div><h1>Wi-Fi setup</h1><p class=note>Everything stays on this device. Leave the password blank to keep the stored one when the network name is unchanged.</p><form method=post action="/api/setup"><section class=card><h2>Wi-Fi</h2><label>Network name<input name=ssid value="__SSID__" maxlength=32></label><label>Password<input name=password type=password placeholder="(unchanged)" maxlength=64></label><button>Save and restart</button></section></form><section class=card><h2>Stored credentials</h2><p class=note>Source: __SOURCE__</p><form method=post action="/api/wifi/clear"><button class=sec>Forget Wi-Fi</button></form></section><p class=note><a href="/fw">Firmware update</a> &middot; iDryer Touch v__VERSION__</p></main>)HTML";
+    String page = R"HTML(<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><link rel=icon type=image/png href="/logo.png"><title>iDryer Touch setup</title><style>:root{color-scheme:dark;--bg:#090d14;--p:#101722;--l:#29384b;--t:#eaf1fa;--m:#91a2b8;--a:#5ba9ff;font-family:system-ui,sans-serif}body{margin:0;background:var(--bg);color:var(--t)}main{max-width:620px;margin:auto;padding:24px 15px}.card{background:var(--p);border:1px solid var(--l);border-radius:12px;padding:16px;margin:14px 0}.logo{display:flex;align-items:center;gap:10px;font-size:24px;font-weight:800;letter-spacing:-1px}.logo img{width:40px;height:40px;border-radius:9px}h1{font-size:23px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--m)}label{display:grid;gap:6px;margin:12px 0;color:var(--m);font-size:13px}input,select,button{box-sizing:border-box;width:100%;min-height:43px;border-radius:8px;border:1px solid #38506b;background:#0c131d;color:var(--t);font:inherit;padding:0 10px}button{background:#1d5d99;border-color:#69b4ff;font-weight:700;margin-top:8px;cursor:pointer}button.sec{background:#202a38;border-color:#38506b}.note{font-size:13px;line-height:1.45;color:var(--m)}a{color:var(--a)}</style><main><p><a href="/">&larr; Dashboard</a></p><div class=logo><img src="/logo.png" alt="iDryer" width=40 height=40>iDryer Touch</div><h1>Wi-Fi setup</h1><p class=note>Everything stays on this device. Leave the password blank to keep the stored one when the network name is unchanged.</p><form method=post action="/api/setup"><section class=card><h2>Wi-Fi</h2><label>Network name<input name=ssid value="__SSID__" maxlength=32></label><label>Password<input name=password type=password placeholder="(unchanged)" maxlength=64></label><button>Save and restart</button></section></form><section class=card><h2>Display</h2><p class=note>Blanks the touch panel after this much idle time. The tap that wakes it is ignored, so it cannot press whatever happens to be under your finger.</p><form method=post action="/api/display"><label>Screen timeout<select name=timeout>__TIMEOUT_OPTS__</select></label><button>Save display settings</button></form></section><section class=card><h2>Stored credentials</h2><p class=note>Source: __SOURCE__</p><form method=post action="/api/wifi/clear"><button class=sec>Forget Wi-Fi</button></form></section><p class=note><a href="/fw">Firmware update</a> &middot; iDryer Touch v__VERSION__</p></main>)HTML";
+    page.replace("__TIMEOUT_OPTS__", screenTimeoutOptions());
     page.replace("__SSID__",    htmlEscape(s_stationSsid.c_str()));
     page.replace("__SOURCE__",  htmlEscape(s_wifiCredentialSource.c_str()));
     page.replace("__VERSION__", VERSION_STR);
@@ -761,6 +796,7 @@ void configureRoutes() {
     s_server.on("/api/invoke",     HTTP_POST, handleInvokePost);
     s_server.on("/api/command",    HTTP_POST, handleCommandPost);
     s_server.on("/api/setup",      HTTP_POST, handleSetupPost);
+    s_server.on("/api/display",    HTTP_POST, handleDisplayPost);
     s_server.on("/api/wifi",       HTTP_POST, handleWifiPost);
     s_server.on("/api/wifi/clear", HTTP_POST, handleWifiClearPost);
     s_server.on("/api/ota",        HTTP_POST, handleOtaPost, handleOtaUpload);

@@ -29,6 +29,7 @@ constexpr char kPrefsNamespace[] = "idryer-touch";
 constexpr char kCalibKey[]       = "tcal";
 constexpr char kCalibRotKey[]    = "tcalrot";
 constexpr char kBacklightKey[]   = "bl";
+constexpr char kTimeoutKey[]     = "scrto";
 
 // Landscape. 1 and 3 are the two landscape orientations; 3 puts the USB and
 // header connectors at the bottom, which is right way up on this board — 1 gave
@@ -127,6 +128,13 @@ CydPanel   s_lcd;
 bool       s_ready = false;
 uint8_t    s_backlight = 80;
 
+// Idle blanking state. Default 2 minutes — long enough to read a drying run at a
+// glance, short enough that the panel is not lit all night in a workshop.
+uint16_t   s_timeoutS       = 120;
+uint32_t   s_lastActivityMs = 0;
+bool       s_asleep         = false;
+bool       s_swallowTouch   = false;
+
 lv_disp_draw_buf_t s_drawBuf;
 lv_color_t        *s_buf = nullptr;
 lv_disp_drv_t      s_dispDrv;
@@ -147,9 +155,26 @@ void flush(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *pixels) {
     lv_disp_flush_ready(drv);
 }
 
+// The wake gesture must never reach a widget. A dark panel gives no clue what is
+// underneath your finger, and on this UI that could be STOP on a running unit or
+// START DRYING. So the touch that wakes the screen is swallowed, and every
+// subsequent report stays RELEASED until the finger lifts — otherwise LVGL would
+// see press-then-release over a button and fire it anyway.
 void readTouch(lv_indev_drv_t *, lv_indev_data_t *data) {
     int32_t x = 0, y = 0;
-    if (s_lcd.getTouch(&x, &y)) {
+    const bool touched = s_lcd.getTouch(&x, &y);
+
+    if (touched) {
+        s_lastActivityMs = millis();
+        if (s_asleep) {
+            wake();
+            s_swallowTouch = true;   // this whole gesture only wakes the screen
+        }
+    } else if (s_swallowTouch) {
+        s_swallowTouch = false;      // finger lifted — input is live again
+    }
+
+    if (touched && !s_swallowTouch) {
         data->point.x = (lv_coord_t)x;
         data->point.y = (lv_coord_t)y;
         data->state   = LV_INDEV_STATE_PRESSED;
@@ -169,10 +194,12 @@ bool loadCalibration() {
     if (!prefs.begin(kPrefsNamespace, true)) return false;
     uint16_t data[8];
     const size_t  got = prefs.getBytes(kCalibKey, data, sizeof(data));
-    const uint8_t rot = prefs.getUChar(kCalibRotKey, 0xFF);
-    const uint8_t bl  = prefs.getUChar(kBacklightKey, 80);
+    const uint8_t  rot = prefs.getUChar(kCalibRotKey, 0xFF);
+    const uint8_t  bl  = prefs.getUChar(kBacklightKey, 80);
+    const uint16_t to  = prefs.getUShort(kTimeoutKey, s_timeoutS);
     prefs.end();
     if (bl >= 10 && bl <= 100) s_backlight = bl;
+    if (to <= 3600) s_timeoutS = to;
     if (got != sizeof(data) || rot != kRotation) return false;
     s_lcd.setTouchCalibrate(data);
     return true;
@@ -263,7 +290,39 @@ bool begin() {
 
 void loop() {
     if (!s_ready) return;
+
+    // Keep LVGL running while blanked so the panel is already showing current
+    // state the instant it lights up, rather than a stale frame.
     lv_timer_handler();
+
+    if (s_timeoutS && !s_asleep &&
+        (uint32_t)(millis() - s_lastActivityMs) >= (uint32_t)s_timeoutS * 1000u) {
+        s_asleep = true;
+        s_lcd.setBrightness(0);
+    }
+}
+
+void wake() {
+    s_lastActivityMs = millis();
+    if (!s_asleep) return;
+    s_asleep = false;
+    s_lcd.setBrightness((uint8_t)((uint16_t)s_backlight * 255 / 100));
+}
+
+bool asleep() { return s_asleep; }
+
+uint16_t screenTimeout() { return s_timeoutS; }
+
+void setScreenTimeout(uint16_t seconds) {
+    if (seconds > 3600) seconds = 3600;
+    s_timeoutS = seconds;
+    wake();
+
+    Preferences prefs;
+    if (prefs.begin(kPrefsNamespace, false)) {
+        prefs.putUShort(kTimeoutKey, seconds);
+        prefs.end();
+    }
 }
 
 bool ready() { return s_ready; }
@@ -272,6 +331,8 @@ void setBacklight(uint8_t percent) {
     if (percent > 100) percent = 100;
     if (percent < 5)   percent = 5;
     s_backlight = percent;
+    // Changing brightness counts as activity, and must not fight the blanker.
+    wake();
     s_lcd.setBrightness((uint8_t)((uint16_t)percent * 255 / 100));
 
     Preferences prefs;

@@ -80,6 +80,8 @@ that already exists in `idryer-core`.
 - [ ] Touch header uses a text wordmark; the web UI uses the real logo. Matching
       it needs a PNG decoder or a converted RGB565 array.
 - [ ] Backlight button cycles 100/50/20% with no indication of the current level.
+- [ ] Screen timeout is web-only. Worth surfacing on the Info screen too, since
+      that is where someone standing at the dryer would look for it.
 - [ ] Web UI has no unit-count control and no profile editor.
 - [ ] Touch recalibration is unreachable — `display::recalibrateTouch()` exists
       but nothing calls it.

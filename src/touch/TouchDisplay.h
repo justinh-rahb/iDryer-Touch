@@ -23,6 +23,17 @@ bool ready();
 void setBacklight(uint8_t percent);
 uint8_t backlight();
 
+// Idle blanking. 0 disables it. Persisted.
+void     setScreenTimeout(uint16_t seconds);
+uint16_t screenTimeout();
+
+// True while the backlight is off from an idle timeout.
+bool asleep();
+
+// Turn the backlight back on and restart the idle countdown. The touch layer
+// calls this itself; expose it so non-touch events can wake the panel too.
+void wake();
+
 // Re-runs the corner-target calibration and stores the result. Touch on a
 // resistive panel is unusable without this, so it runs automatically on first
 // boot; this is the manual redo.
