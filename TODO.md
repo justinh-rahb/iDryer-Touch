@@ -19,6 +19,8 @@ half is verified; the controller half is not, because no dryer is attached yet.
       up (captive portal serving) while touch calibration and UI navigation both
       work. The MicroPython-era finding was specific to that image; plain-ESP32
       CYD hardware is fine here, and no move to ESP32-S3 is needed.
+- [x] ~~Idle blanking.~~ Screen blanks on timeout and the waking tap is swallowed
+      — verified on hardware that it cannot press the button underneath.
 - [ ] **UART link.** Still unverified — no dryer attached. Confirm Hello /
       telemetry / status / menu against the real RP2040 on CN1 (TX=GPIO22,
       RX=GPIO27). Hello is going out at 94 bytes, which is the protocol-v2 size,
