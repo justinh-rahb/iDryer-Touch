@@ -46,7 +46,7 @@ import serial
 # Константы протокола
 # ---------------------------------------------------------------------------
 SOF = 0xAA
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2   # iDryerControllerV2 v2.0.0 / idryer-core d3df6af
 
 # FLAGS
 FLAG_ACK_REQUIRED = 0x01
@@ -206,13 +206,16 @@ def make_unit_config(unit_id: int, caps: int, scales: list, rfid: list) -> bytes
 def make_hello(fw_major: int = 2, fw_minor: int = 0, fw_patch: int = 0,
                units_count: int = 2, mcu_serial: str = "36B955AB4350") -> bytes:
     """
-    HelloPayload: 86 байт.
-    role(1) + pad(3) + fwVer(4) + workTime(4) + hwVer[8] + unitsCount(1) + units[4](48) + mcuSerial[17]
+    HelloPayload: 94 байта (protocol v2).
+    role(1) + pad(3) + fwVer(4) + workTime(4) + hwVer[16] + unitsCount(1) + units[4](48) + mcuSerial[17]
+
+    v2 расширил hardwareVersion с 8 до 16 байт. UartBridge::validateLength
+    сравнивает длину точно, поэтому 86-байтный Hello просто отбрасывается.
     """
     role      = bytes([ROLE_MCU, 0, 0, 0])
     fw_ver    = struct.pack('<I', (fw_major << 16) | (fw_minor << 8) | fw_patch)
     work_time = struct.pack('<I', 3600)
-    hw_ver    = b'v1.0\x00\x00\x00\x00'
+    hw_ver    = b'rp2040-v1'.ljust(16, b'\x00')
     u_count   = bytes([units_count])
 
     unit0 = make_unit_config(0, CAP_ALL, [0, 1], [0])   # U1: W0,W1 / R0
@@ -223,7 +226,7 @@ def make_hello(fw_major: int = 2, fw_minor: int = 0, fw_patch: int = 0,
     serial_b = mcu_serial.encode()[:16].ljust(17, b'\x00')
 
     payload = role + fw_ver + work_time + hw_ver + u_count + unit0 + unit1 + unit2 + unit3 + serial_b
-    assert len(payload) == 86, f"HelloPayload size {len(payload)} != 86"
+    assert len(payload) == 94, f"HelloPayload size {len(payload)} != 94"
     return payload
 
 
@@ -242,6 +245,12 @@ def make_telemetry(units: list) -> bytes:
                             hum_pct10,
                             u['heater_pct'],
                             1 if u['fan'] else 0)
+    # The wire struct is a fixed count(1) + units[4]*7 = 29 bytes, and
+    # UartBridge::validateLength compares exactly. Without this padding a
+    # single-unit frame is 8 bytes and gets dropped silently.
+    while len(data) < 1 + 4 * 7:
+        data += struct.pack('<BhHBB', 0, 0, 0, 0, 0)
+    assert len(data) == 29, f"TelemetryPayload size {len(data)} != 29"
     return data
 
 
@@ -254,11 +263,14 @@ def make_status(units: list, uptime: int = 0) -> bytes:
     """
     data = bytes([len(units)])
     for u in units:
-        entry = struct.pack('<BBIHHIIIIBBBB',
+        # <BBIhHHIIIIBBBB — 14 fields, 32 bytes. The old format string had only
+        # 13: durationMinutes was missing and targetTempC10 was packed unsigned
+        # despite being int16_t, so make_status() raised on every call.
+        entry = struct.pack('<BBIhHHIIIIBBBB',
                             u['id'],
                             u.get('mode', MODE_IDLE),
                             u.get('session', 0),
-                            int(u.get('target_temp', 0) * 10),
+                            int(u.get('target_temp', 0) * 10),   # int16, signed
                             u.get('target_hum', 0),
                             u.get('duration_min', 0),
                             u.get('elapsed', 0),
@@ -272,10 +284,13 @@ def make_status(units: list, uptime: int = 0) -> bytes:
         assert len(entry) == 32, f"StatusEntry size {len(entry)} != 32"
         data += entry
     # Дополнить до 4 юнитов пустыми (упрощение для фиксированного размера)
-    empty = struct.pack('<BBIHHIIIIBBBB', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    empty = struct.pack('<BBIhHHIIIIBBBB', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
     while len(data) < 1 + 4 * 32:
         data += empty
     data += struct.pack('<I', uptime)
+    # v2: device-wide флаг блокировки внешних команд. 0 = команды принимаются.
+    data += bytes([0])
+    assert len(data) == 134, f"StatusPayload size {len(data)} != 134"
     return data
 
 
