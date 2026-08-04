@@ -90,6 +90,16 @@ MODE_DRYING  = 1
 MODE_STORAGE = 2
 MODE_PROFILE = 3
 MODE_FAULT   = 4
+MODE_HEATING = 5   # v2
+MODE_LIGHT   = 6   # v2
+
+# UartCmdCode (contracts/_generated/uart_protocol.h)
+CMD_START        = 0x01
+CMD_STOP         = 0x02
+CMD_FIND         = 0x03
+CMD_GET_CONFIG   = 0x05
+CMD_RESET_FAULT  = 0x10
+CMD_CLEAR_ERRORS = 0x12
 
 # UnitCapabilities
 CAP_HEATER           = 0x0001
@@ -196,6 +206,72 @@ class FrameParser:
 # ---------------------------------------------------------------------------
 # Payload builders
 # ---------------------------------------------------------------------------
+
+# ── Simulated units ───────────────────────────────────────────────────────────
+# Previously this emulator transmitted a fixed script: mode was hardcoded to
+# DRYING and commands were ACKed then thrown away, so pressing Stop in the UI
+# looked broken even though the device had sent the frame correctly. These units
+# hold real state and react.
+
+AMBIENT_C = 24.0
+
+class SimUnit:
+    def __init__(self, unit_id):
+        self.id = unit_id
+        self.mode = MODE_IDLE
+        self.target_temp = 0.0
+        self.target_hum = 0
+        self.duration_min = 0
+        self.started = 0.0
+        self.session = 0
+        self.temp = AMBIENT_C + unit_id * 1.5
+        self.hum = 45.0 - unit_id * 3.0
+
+    @property
+    def running(self):
+        return self.mode in (MODE_DRYING, MODE_STORAGE, MODE_PROFILE)
+
+    def start(self, mode, target_temp, arg1):
+        self.mode = mode
+        self.target_temp = target_temp
+        self.session += 1
+        self.started = time.time()
+        if mode == MODE_DRYING:
+            self.duration_min, self.target_hum = int(arg1), 0
+        else:                       # storage holds humidity, runs open-ended
+            self.duration_min, self.target_hum = 0, int(arg1)
+
+    def stop(self):
+        self.mode = MODE_IDLE
+        self.target_temp = 0.0
+        self.target_hum = 0
+        self.duration_min = 0
+
+    def elapsed(self):
+        return int(time.time() - self.started) if self.running else 0
+
+    def tick(self, dt):
+        """Crude first-order approach to target, so the UI shows movement."""
+        goal = self.target_temp if self.running else AMBIENT_C
+        self.temp += (goal - self.temp) * min(1.0, dt / 45.0)
+        # Drying pulls humidity down; idle lets it creep back up.
+        hgoal = (self.target_hum or 12.0) if self.running else 45.0
+        self.hum += (hgoal - self.hum) * min(1.0, dt / 60.0)
+        # A drying run ends on its own when the timer expires.
+        if self.mode == MODE_DRYING and self.duration_min:
+            if self.elapsed() >= self.duration_min * 60:
+                self.stop()
+
+    def heater_pct(self):
+        if not self.running:
+            return 0
+        gap = self.target_temp - self.temp
+        return max(0, min(100, int(gap * 25)))
+
+    def fan(self):
+        return self.running
+
+
 def make_unit_config(unit_id: int, caps: int, scales: list, rfid: list) -> bytes:
     """UnitConfig: 12 байт."""
     scales_b = bytes((scales + [0xFF] * 4)[:4])
@@ -358,6 +434,28 @@ def handle_frame(ser, kind, flags, seq, payload, state):
             cmd_code, target_state, unit_id = struct.unpack('<BBB', payload[:3])
             arg0, arg1 = struct.unpack('<II', payload[5:13])
             print(f"[RX] Command: code=0x{cmd_code:02X} unit={unit_id} arg0={arg0} arg1={arg1}")
+
+            units = state['units']
+            if cmd_code == CMD_START and unit_id < len(units):
+                # arg0 is target temperature in tenths; arg1 is minutes (drying)
+                # or target humidity (storage).
+                units[unit_id].start(target_state, arg0 / 10.0, arg1)
+                u = units[unit_id]
+                print(f"      -> unit {unit_id} {'DRYING' if u.mode == MODE_DRYING else 'STORAGE'} "
+                      f"target={u.target_temp:.0f}C arg1={arg1}")
+            elif cmd_code == CMD_STOP:
+                # unitId 0xFF (or out of range) means every unit.
+                targets = units if unit_id >= len(units) else [units[unit_id]]
+                for u in targets:
+                    u.stop()
+                print(f"      -> stopped {len(targets)} unit(s)")
+            elif cmd_code in (CMD_RESET_FAULT, CMD_CLEAR_ERRORS):
+                for u in units:
+                    if u.mode == MODE_FAULT:
+                        u.stop()
+                print("      -> faults cleared")
+            elif cmd_code == CMD_FIND:
+                print(f"      -> find unit {unit_id} (beep)")
         else:
             print(f"[RX] Command (короткий payload {len(payload)}B)")
         if flags & FLAG_ACK_REQUIRED:
@@ -430,6 +528,7 @@ def main():
     state = {
         'seq': 0,
         'hello_sent': False,
+        'units': [SimUnit(i) for i in range(args.units)],
     }
 
     t_start      = time.time()
@@ -454,6 +553,14 @@ def main():
 
             now = elapsed()
 
+            # --- Advance the simulated units ---
+            t_now = time.time()
+            dt = t_now - state.get('t_last_tick', t_now)
+            state['t_last_tick'] = t_now
+            if dt > 0:
+                for u in state['units']:
+                    u.tick(dt)
+
             # --- Hello (каждые 30 с или первый раз через 2 с) ---
             if now - t_hello > (2.0 if not state['hello_sent'] else 30.0):
                 hello = make_hello(
@@ -471,9 +578,9 @@ def main():
             # --- Telemetry (каждые 5 с) ---
             if now - t_telemetry > 5.0:
                 units_tel = [
-                    {'id': i, 'temp_c': 55.3 + i * 2, 'hum_pct': 23.0,
-                     'heater_pct': 75, 'fan': True}
-                    for i in range(args.units)
+                    {'id': u.id, 'temp_c': u.temp, 'hum_pct': u.hum,
+                     'heater_pct': u.heater_pct(), 'fan': u.fan()}
+                    for u in state['units']
                 ]
                 tel = make_telemetry(units_tel)
                 state['seq'] = send_frame(ser, KIND_TELEMETRY, tel, state['seq'],
@@ -484,17 +591,20 @@ def main():
             # --- Status (каждые 10 с) ---
             if now - t_status > 10.0:
                 units_st = [
-                    {'id': i, 'mode': MODE_DRYING, 'session': 1,
-                     'target_temp': 55.0, 'target_hum': 20,
-                     'duration_min': 240, 'elapsed': int(now),
-                     'remaining': max(0, 14400 - int(now))}
-                    for i in range(args.units)
+                    {'id': u.id, 'mode': u.mode, 'session': u.session,
+                     'target_temp': u.target_temp, 'target_hum': u.target_hum,
+                     'duration_min': u.duration_min, 'elapsed': u.elapsed(),
+                     'remaining': max(0, u.duration_min * 60 - u.elapsed())}
+                    for u in state['units']
                 ]
                 st = make_status(units_st, uptime=int(now))
                 state['seq'] = send_frame(ser, KIND_STATUS, st, state['seq'],
                                           FLAG_ACK_REQUIRED)
                 t_status = now
-                print(f"[TX] Status (DRYING, elapsed={int(now)}s)")
+                summary = " ".join(
+                    f"U{u.id+1}:{['idle','dry','store','profile','fault','heat','light'][u.mode]}"
+                    f"@{u.temp:.1f}C" for u in state['units'])
+                print(f"[TX] Status {summary}")
 
             # --- Weights (каждые 10 с) ---
             if now - t_weights > 10.0:
