@@ -21,15 +21,24 @@ half is verified; the controller half is not, because no dryer is attached yet.
       CYD hardware is fine here, and no move to ESP32-S3 is needed.
 - [x] ~~Idle blanking.~~ Screen blanks on timeout and the waking tap is swallowed
       — verified on hardware that it cannot press the button underneath.
-- [ ] **UART link.** Still unverified — no dryer attached. Confirm Hello /
-      telemetry / status / menu against the real RP2040 on CN1 (TX=GPIO22,
-      RX=GPIO27). Hello is going out at 94 bytes, which is the protocol-v2 size,
-      so the core repin is live.
+- [x] ~~**UART link.**~~ Verified against `tools/emulate_controller.py` over
+      CN1 (TX=GPIO22, RX=GPIO27), protocol v2 confirmed on the wire. Full
+      handshake works: emulator Hello -> HelloAck carrying the device's IP and
+      SSID -> the device requests config. Telemetry and status flow, and
+      `/api/status` reports `mcuConnected: true` with live per-unit values.
+      Not yet tried against the real RP2040.
 - [ ] Check free heap after `display::begin()` — the LVGL draw buffer is 25.6 KB
       of DMA-capable internal RAM on top of 70.7 KB static, and WiFi wants its
       own.
-- [ ] Web UI has not been exercised on-device yet; the AP comes up but nothing
-      has connected to it.
+- [x] ~~Web UI on-device.~~ Wi-Fi provisioning worked (device joined a real
+      network and persisted the credentials); `/api/status` serves correct live
+      data over the LAN.
+- [ ] The emulator never answers the device's `GetConfig`, so `menuRevision`
+      stays 0 and the menu browser cannot be exercised without a real
+      controller. Teaching it to reply with chunked menu JSON would close the
+      last untested path.
+- [ ] The emulator logs `Неизвестный kind=0x11` for the device's TelemetryAck —
+      harmless, but it should decode it rather than warn.
 
 ## Controller features not surfaced
 
