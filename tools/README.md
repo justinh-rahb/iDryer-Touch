@@ -13,10 +13,18 @@ Only needs `pyserial`.
 ~/.platformio/penv/bin/python tools/emulate_controller.py --units 3 --session 86400
 ```
 
-`--port` defaults to `auto`: with one USB serial adapter connected it is picked
-automatically, and with several the tool lists them and asks. Port numbers change
-across replugs (`usbserial-210` becomes `usbserial-10`), so avoid pinning one —
-and avoid a shell glob, which fails confusingly when the adapter is unplugged.
+`--port` defaults to `auto`. Give it explicitly once:
+
+```bash
+~/.platformio/penv/bin/python tools/emulate_controller.py --port /dev/cu.PL2303G-XXXX --units 3 --session 86400
+```
+
+after which the choice is remembered in `~/.idryer_emulator_port` and `auto`
+finds it again. That matters because the board's own USB console is normally
+plugged in too, so there are almost always two candidates and `auto` would
+otherwise have to refuse. Port numbers also move across replugs
+(`PL2303G-USBtoUART110` becomes `...210`), so do not pin one in a script — and
+do not use a shell glob, which fails confusingly when the adapter is unplugged.
 
 Use PlatformIO's Python. The system one has no `pyserial`.
 

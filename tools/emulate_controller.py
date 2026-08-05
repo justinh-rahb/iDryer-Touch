@@ -687,6 +687,26 @@ def handle_frame(ser, kind, flags, seq, payload, state):
 # Главный цикл
 # ---------------------------------------------------------------------------
 
+
+# Remembering the choice is what makes --port auto usable: the board's console
+# is normally connected as well, so there are almost always two candidates.
+_PORT_MEMO = pathlib.Path.home() / ".idryer_emulator_port"
+
+
+def _remember_port(dev: str) -> None:
+    try:
+        _PORT_MEMO.write_text(dev, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _recall_port():
+    try:
+        return _PORT_MEMO.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
 def resolve_port(requested: str) -> str:
     """Turn --port into a real device, or explain clearly why it cannot.
 
@@ -708,6 +728,7 @@ def resolve_port(requested: str) -> str:
     if requested and requested != "auto":
         import os
         if os.path.exists(requested):
+            _remember_port(requested)
             return requested
         print(f"[HOST] Port not found: {requested}")
         found = candidates()
@@ -725,12 +746,24 @@ def resolve_port(requested: str) -> str:
         raise SystemExit(2)
     if len(found) == 1:
         print(f"[HOST] Auto-selected {found[0].device} ({found[0].description})")
+        _remember_port(found[0].device)
         return found[0].device
+
+    # The board's own console is essentially always plugged in too, so "several
+    # ports" is the normal case, not the exception — refusing to choose would
+    # make auto useless. Prefer whichever port worked last time.
+    last = _recall_port()
+    if last:
+        for p in found:
+            if p.device == last:
+                print(f"[HOST] Auto-selected {p.device} ({p.description}) — used last time")
+                return p.device
 
     print("[HOST] Several serial ports are connected — say which one:")
     for p in found:
         print(f"         --port {p.device:34} {p.description}")
-    print("[HOST] (the CYD's own CH340 is its console, not the controller link)")
+    print("[HOST] (the board's own USB is its console, not the controller link)")
+    print("[HOST] Once given explicitly it is remembered, and --port auto works after that.")
     raise SystemExit(2)
 
 
