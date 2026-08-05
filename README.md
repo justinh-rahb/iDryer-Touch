@@ -8,9 +8,12 @@ to the dryer's RP2040 controller over UART and serves everything itself on your
 LAN. Same idea as [iHeater Remote](https://github.com/justinh-rahb/iHeater-Remote),
 applied to the dryer.
 
-> **Status: pre-hardware.** The firmware builds and the web UI is verified in a
-> browser, but nothing has been flashed to a board yet. Do not treat this as
-> working firmware.
+> **Status: running on hardware, not yet on a dryer.** Flashed to an
+> ESP32-2432S028R and verified: panel, touch and calibration, Wi-Fi
+> provisioning, the web UI and API over LAN, idle blanking, and the full UART
+> handshake — telemetry, status, menu, presets and start/stop — against
+> `tools/emulate_controller.py`. It has never been connected to an actual iDryer
+> controller, and the web UI has no authentication. See [TODO.md](TODO.md).
 
 ## What it does
 
