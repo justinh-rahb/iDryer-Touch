@@ -443,14 +443,24 @@ void refreshPresetGrid() {
         const MenuPreset &p = s_presets[idx];
         lv_label_set_text(s_presetLbl[slot], p.name ? p.name : "?");
 
-        const int mins = presetMinutes(p);
-        if (mins >= 60) snprintf(buf, sizeof(buf), "%dC %dh%02d", presetTemp(p), mins / 60, mins % 60);
-        else            snprintf(buf, sizeof(buf), "%dC %dm", presetTemp(p), mins);
+        // Names come from flash, values from the cache — so between boot and the
+        // controller's first config the grid knows every material but none of
+        // their settings. Say that, rather than printing a confident "0C 0m".
+        const bool known = g_menu_cache.revision > 0;
+        const int  mins  = presetMinutes(p);
+        if (!known)          snprintf(buf, sizeof(buf), "...");
+        else if (mins >= 60) snprintf(buf, sizeof(buf), "%dC %dh%02d", presetTemp(p), mins / 60, mins % 60);
+        else                 snprintf(buf, sizeof(buf), "%dC %dm", presetTemp(p), mins);
         lv_label_set_text(s_presetSubLbl[slot], buf);
 
-        const bool sel = (s_presetSel == (int8_t)idx);
+        const bool sel = known && (s_presetSel == (int8_t)idx);
         lv_obj_set_style_bg_color(b, lv_color_hex(sel ? C_PRIMARY : C_BTN), 0);
         lv_obj_set_style_border_color(b, lv_color_hex(sel ? C_PRIMEDGE : C_BTNEDGE), 0);
+        // Starting a run from unknown settings would send 0 C for 0 minutes.
+        lv_obj_set_style_text_color(s_presetLbl[slot],
+                                    lv_color_hex(known ? C_TEXT : C_IDLE), 0);
+        if (known) lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+        else       lv_obj_clear_flag(b, LV_OBJ_FLAG_CLICKABLE);
     }
 
     // Footer follows the selection: browse -> commit.

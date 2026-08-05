@@ -214,6 +214,9 @@ async function loadPresets(){
 function renderPresets(){
   const sel=$("presetUnit");
   if(state&&sel.options.length!==state.unitsCount){sel.innerHTML="";for(let i=0;i<state.unitsCount;i++)sel.add(new Option("Unit "+(i+1),i))}
+  // Values live in the cache, names in flash — between boot and the first
+  // config the grid knows every material but none of their settings.
+  if(state&&!state.menuRevision){$("presetGrid").innerHTML='<p class="note">Waiting for the controller to send its menu\u2026</p>';return}
   $("presetGrid").innerHTML=presets.map((p,i)=>`<div class="pc"><b>${p.name}</b>
     <div class="f"><span>Temp °C</span><input type="number" value="${p.temp}" onchange="savePreset(${i},'temp',this.value)"></div>
     <div class="f"><span>Time min</span><input type="number" value="${p.minutes}" onchange="savePreset(${i},'minutes',this.value)"></div>
