@@ -18,6 +18,11 @@ It sends Hello two seconds after start, then telemetry every 5 s, status every
 coming back from the ESP32. `--rfid` injects a tag event, `--session` sets the
 run length, `--fw-major` picks the reported firmware major.
 
+`--units` accepts 1-4 because the UART contract carries `units[4]`, but the menu
+mirror is `MENU_MAX_UNITS`, which is **3** on controller v2. Ask for 4 and the
+device logs a clamp warning and settles on 3 — that is the firmware being honest,
+not a fault.
+
 Wire the emulator's serial adapter to the CYD's `CN1` (TX=GPIO22, RX=GPIO27,
 crossed), not to the CYD's USB port — that is the CH340 console.
 

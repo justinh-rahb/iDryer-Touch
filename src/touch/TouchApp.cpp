@@ -149,7 +149,20 @@ void onHello(const UartHelloPayload &p, const UartFrameHeader &) {
 
     s_mcuConnected = true;
     strncpy(s_mcuSerial, p.mcuSerial, sizeof(s_mcuSerial) - 1);
-    if (p.unitsCount >= 1 && p.unitsCount <= kMaxUnits) s_unitsCount = p.unitsCount;
+    // Clamp rather than ignore. The UART contract carries units[4] but the menu
+    // mirror is MENU_MAX_UNITS (3 on controller v2), so a controller reporting
+    // more used to fall through this guard and leave a stale count from an
+    // earlier session — the UI then showed the wrong number of units with no
+    // hint anything had been dropped.
+    if (p.unitsCount >= 1) {
+        if (p.unitsCount > kMaxUnits) {
+            HAL_LOG_WARN("UART", "controller reports %u units, menu mirror supports %u - clamping",
+                         p.unitsCount, kMaxUnits);
+            s_unitsCount = kMaxUnits;
+        } else {
+            s_unitsCount = p.unitsCount;
+        }
+    }
 
     requestConfig();
 }
