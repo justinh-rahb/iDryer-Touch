@@ -330,6 +330,7 @@ def load_menu_meta():
             "max": float(hi),
             "per_unit": scope == "META_SCOPE_PER_UNIT",
         })
+    out.sort(key=lambda i: i["id"])
     return out
 
 
@@ -359,6 +360,16 @@ def build_menu_json(units: int, rev: int = 8, overrides=None) -> bytes:
     lang_id, units_id = total_ids - 1, total_ids - 2
     pinned = {lang_id: 1, units_id: units}   # 1 = en
 
+    # Preset TIME ids, so they can be filled from the sibling TEMP rather than
+    # from a mid-range that is identical for every material.
+    by_id = {i["id"]: i for i in meta}
+    preset_time_ids = {}
+    for mid in range(56, 56 + 17 * 4, 4):          # PRESETS children, stride 4
+        t_id, tm_id = mid + 1, mid + 2
+        if t_id in by_id and tm_id in by_id:
+            lo, hi = by_id[t_id]["min"], by_id[t_id]["max"]
+            preset_time_ids[tm_id] = preset_time_for(lo + (hi - lo) * 0.5)
+
     if meta:
         for item in meta:
             lo, hi = item["min"], item["max"]
@@ -367,6 +378,8 @@ def build_menu_json(units: int, rev: int = 8, overrides=None) -> bytes:
             # accepted and then be silently reverted by the next config echo.
             if item["id"] in pinned:
                 v = pinned[item["id"]]
+            elif item["id"] in preset_time_ids:
+                v = preset_time_ids[item["id"]]
             elif item["toggle"]:
                 v = 0
             elif hi > lo:
@@ -387,6 +400,22 @@ def build_menu_json(units: int, rev: int = 8, overrides=None) -> bytes:
     doc = (f'{{"rev":{rev},"full":true,"units":{units},'
            f'"active":0,"lang":"en","vals":{{{body}}}}}')
     return doc.encode()
+
+
+def preset_time_for(temp_c: float) -> int:
+    """Plausible drying minutes for a material, inferred from its temperature.
+
+    Every preset's TIME item declares the same 0..600 range, so a mid-range
+    guess gives all 17 materials an identical 5 h and the UI looks broken even
+    though it is faithfully reporting what it was told. Temperature ranges *do*
+    differ per material (PLA 35..55, ABS 70..90, PC higher still), so the band
+    is a reasonable stand-in for how stubborn the filament is. Cosmetic: a real
+    controller ships its own per-material defaults.
+    """
+    if temp_c < 50:   return 240      # PLA family, 4 h
+    if temp_c < 70:   return 300      # PETG, 5 h
+    if temp_c < 90:   return 360      # ABS / PA, 6 h
+    return 420                        # PC and friends, 7 h
 
 
 def send_config(ser, state, units: int):
