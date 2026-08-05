@@ -85,17 +85,41 @@ label{display:grid;gap:7px;font-size:12px;color:var(--muted);margin:13px 0}
 input,select{width:100%;min-height:43px;background:#0c131d;border:1px solid #38506b;border-radius:8px;color:var(--text);font:inherit;padding:0 11px}
 .feedback{min-height:18px;color:var(--muted);font-size:13px;margin-top:10px}
 .footer{font-size:11px;color:var(--muted);margin:18px 0 0}.footer a{color:inherit;text-decoration:none}.footer a:hover{color:var(--accent)}
-.row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid #1b2634}
-.row:last-child{border-bottom:0}.row b{font-weight:600;font-size:14px}.row small{display:block;color:var(--muted);font-size:11px}
-.row input{width:110px;min-height:36px;text-align:right}
+/* Menu rows read as a list you walk, not a form: submenus are full-width
+   targets with a chevron, leaves keep their control on the right. */
+.mlist{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel2)}
+.mrow{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:10px 12px;border-bottom:1px solid #1b2634;min-height:52px}
+.mrow:last-child{border-bottom:0}
+.mrow .lbl{min-width:0}
+.mrow .lbl b{display:block;font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow .lbl small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+.mrow.sub{cursor:pointer}
+.mrow.sub:hover{background:#132033}
+.mrow .chev{color:var(--muted);font-size:17px;line-height:1}
+.mrow .val{display:flex;align-items:center;gap:7px}
+.mrow .val input{width:96px;min-height:36px;text-align:right}
+.mrow .val .u{color:var(--muted);font-size:12px;min-width:26px}
+.sw{width:52px;min-height:30px;border-radius:15px;border:1px solid #38506b;background:#0c131d;position:relative;cursor:pointer;padding:0}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:24px;height:24px;border-radius:50%;background:var(--muted);transition:transform .12s,background .12s}
+.sw[aria-pressed=true]{background:var(--active);border-color:#69b4ff}
+.sw[aria-pressed=true]::after{transform:translateX(22px);background:var(--accent)}
+.mempty{color:var(--muted);font-size:13px;padding:14px 12px}
+.useg{display:flex;gap:6px;margin:6px 0 2px}
+.useg button{flex:1;min-height:42px;border:1px solid #38506b;border-radius:8px;background:#172537;
+  color:var(--muted);font:700 13px inherit;cursor:pointer}
+.useg button[aria-pressed=true]{background:var(--primary,#1d5d99);border-color:#69b4ff;color:#fff}
+.useg.one{display:none}
 .preset-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:12px}
 .pc{background:var(--panel2);border:1px solid var(--edge,#233247);border-radius:9px;padding:11px}
 .pc b{display:block;font-size:15px;margin-bottom:8px}
 .pc .f{display:grid;grid-template-columns:auto 1fr;gap:6px;align-items:center;margin:5px 0;font-size:11px;color:var(--muted)}
 .pc .f input{width:100%;min-height:34px;text-align:right}
 .pc .btn{width:100%;margin-top:9px;min-height:38px}
-.crumb{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--muted)}
-.crumb button{background:none;border:0;color:var(--accent);cursor:pointer;font:inherit;padding:0}
+.crumb{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin:0 0 12px;font-size:12px;color:var(--muted)}
+.crumb button{background:none;border:0;color:var(--accent);cursor:pointer;font:inherit;padding:2px 4px;border-radius:5px}
+.crumb button:hover{background:var(--active)}
+.crumb i{font-style:normal;opacity:.5}
+.crumb b{color:var(--text);font-weight:600;padding:2px 4px}
 .hidden{display:none}
 /* The rail carries four tabs plus the settings gear. Spelling out the
    connection state as well overflows a 375px viewport, so on narrow screens the
@@ -123,13 +147,13 @@ input,select{width:100%;min-height:43px;background:#0c131d;border:1px solid #385
 
 <section class="page" data-content="presets"><h2>Material presets <button class="btn sm" id="presetReload">Refresh</button></h2>
 <p>Read from the controller's own preset menu. Editing a temperature or time writes it back, so the MY1–MY3 slots are yours to define.</p>
-<label>Unit<select id="presetUnit"></select></label>
+<label>Unit<div class="useg" id="presetUnit" role="group"></div></label>
 <div id="presetGrid" class="preset-cards"></div>
 <div class="feedback" id="presetFeedback"></div></section>
 
 <section class="page" data-content="dry"><h2>Start drying</h2>
 <p>Runs the heater at a target temperature for a set time, then stops. Values are sent straight to the controller.</p>
-<label>Unit<select id="dryUnit"></select></label>
+<label>Unit<div class="useg" id="dryUnit" role="group"></div></label>
 <label>Temperature (°C)<input id="dryTemp" type="number" min="30" max="110" inputmode="numeric"></label>
 <label>Duration (minutes)<input id="dryTime" type="number" min="1" max="1440" inputmode="numeric"></label>
 <div class="actions"><button class="btn primary" id="startDry">Start drying</button><button class="btn stop" id="stopDry">Stop</button></div>
@@ -137,7 +161,7 @@ input,select{width:100%;min-height:43px;background:#0c131d;border:1px solid #385
 
 <section class="page" data-content="store"><h2>Storage mode</h2>
 <p>Holds the chamber below a humidity target indefinitely, heating only as needed.</p>
-<label>Unit<select id="storeUnit"></select></label>
+<label>Unit<div class="useg" id="storeUnit" role="group"></div></label>
 <label>Temperature (°C)<input id="storeTemp" type="number" min="30" max="110" inputmode="numeric"></label>
 <label>Humidity target (%)<input id="storeHum" type="number" min="1" max="90" inputmode="numeric"></label>
 <div class="actions"><button class="btn primary" id="startStore">Start storage</button><button class="btn stop" id="stopStore">Stop</button></div>
@@ -154,6 +178,28 @@ input,select{width:100%;min-height:43px;background:#0c131d;border:1px solid #385
 const $=id=>document.getElementById(id);
 const MODES=["Idle","Drying","Storage","Profile","Fault"];
 let state=null,menuItems=null,menuParent=0;
+
+// Segmented unit picker. A dropdown hides the choice behind an interaction;
+// with at most three units the options fit inline, and the control removes
+// itself entirely on a single-unit machine.
+const unitSel={};
+function renderUnits(id){
+  const el=$(id); if(!el||!state) return;
+  const n=state.unitsCount||1;
+  if(unitSel[id]===undefined||unitSel[id]>=n) unitSel[id]=0;
+  el.classList.toggle("one",n<2);
+  if(el.childElementCount!==n){
+    el.innerHTML="";
+    for(let i=0;i<n;i++){
+      const b=document.createElement("button");
+      b.type="button"; b.textContent="Unit "+(i+1);
+      b.onclick=()=>{unitSel[id]=i;renderUnits(id)};
+      el.appendChild(b);
+    }
+  }
+  [...el.children].forEach((b,i)=>b.setAttribute("aria-pressed",i===unitSel[id]));
+}
+function unitOf(id){return unitSel[id]||0}
 
 document.querySelectorAll(".tab[data-page]").forEach(b=>b.onclick=()=>showPage(b.dataset.page));
 function showPage(p){document.querySelectorAll(".tab[data-page]").forEach(b=>b.setAttribute("aria-selected",b.dataset.page===p));document.querySelectorAll("[data-content]").forEach(s=>s.classList.toggle("active",s.dataset.content===p));if(p==="menu"&&!menuItems)loadMenu();if(p==="presets"&&!presets.length)loadPresets()}
@@ -192,13 +238,13 @@ function applyStatus(s){
   $("version").textContent="v"+s.firmwareVersion;
   $("mcu").textContent=s.mcuConnected?("controller "+(s.mcuSerial||"connected")+" · menu rev "+s.menuRevision):"controller not detected";
   $("units").innerHTML=(s.units||[]).map(unitCard).join("");
-  ["dryUnit","storeUnit"].forEach(id=>{const el=$(id);if(el.options.length!==s.unitsCount){el.innerHTML="";for(let i=0;i<s.unitsCount;i++)el.add(new Option("Unit "+(i+1),i))}});
+  ["dryUnit","storeUnit","presetUnit"].forEach(renderUnits);
 }
 
-$("startDry").onclick=async()=>{try{await post(`/api/command?do=drying&unit=${$("dryUnit").value}&temperature=${$("dryTemp").value}&duration=${$("dryTime").value}`);$("dryFeedback").textContent="Drying started."}catch(e){$("dryFeedback").textContent=e.message}};
-$("stopDry").onclick=async()=>{try{await post("/api/command?do=stop&unit="+$("dryUnit").value);$("dryFeedback").textContent="Stopped."}catch(e){$("dryFeedback").textContent=e.message}};
-$("startStore").onclick=async()=>{try{await post(`/api/command?do=storage&unit=${$("storeUnit").value}&temperature=${$("storeTemp").value}&humidity=${$("storeHum").value}`);$("storeFeedback").textContent="Storage started."}catch(e){$("storeFeedback").textContent=e.message}};
-$("stopStore").onclick=async()=>{try{await post("/api/command?do=stop&unit="+$("storeUnit").value);$("storeFeedback").textContent="Stopped."}catch(e){$("storeFeedback").textContent=e.message}};
+$("startDry").onclick=async()=>{try{await post(`/api/command?do=drying&unit=${unitOf("dryUnit")}&temperature=${$("dryTemp").value}&duration=${$("dryTime").value}`);$("dryFeedback").textContent="Drying started."}catch(e){$("dryFeedback").textContent=e.message}};
+$("stopDry").onclick=async()=>{try{await post("/api/command?do=stop&unit="+unitOf("dryUnit"));$("dryFeedback").textContent="Stopped."}catch(e){$("dryFeedback").textContent=e.message}};
+$("startStore").onclick=async()=>{try{await post(`/api/command?do=storage&unit=${unitOf("storeUnit")}&temperature=${$("storeTemp").value}&humidity=${$("storeHum").value}`);$("storeFeedback").textContent="Storage started."}catch(e){$("storeFeedback").textContent=e.message}};
+$("stopStore").onclick=async()=>{try{await post("/api/command?do=stop&unit="+unitOf("storeUnit"));$("storeFeedback").textContent="Stopped."}catch(e){$("storeFeedback").textContent=e.message}};
 
 // Menu tree. Fetched in pages so the controller's ~26 KB tree never has to be
 // assembled in one buffer on the ESP32 side.
@@ -212,8 +258,7 @@ async function loadPresets(){
   }catch(e){$("presetFeedback").textContent="Could not load presets."}
 }
 function renderPresets(){
-  const sel=$("presetUnit");
-  if(state&&sel.options.length!==state.unitsCount){sel.innerHTML="";for(let i=0;i<state.unitsCount;i++)sel.add(new Option("Unit "+(i+1),i))}
+  renderUnits("presetUnit");
   // Values live in the cache, names in flash — between boot and the first
   // config the grid knows every material but none of their settings.
   if(state&&!state.menuRevision){$("presetGrid").innerHTML='<p class="note">Waiting for the controller to send its menu\u2026</p>';return}
@@ -232,7 +277,7 @@ async function savePreset(i,field,val){
 // the preset's own START action — that action is global-scope, so the unit it
 // would run on is the controller's choice.
 async function dryPreset(i){
-  const p=presets[i], u=$("presetUnit").value||0;
+  const p=presets[i], u=unitOf("presetUnit")||0;
   try{await post(`/api/command?do=drying&unit=${u}&temperature=${p.temp}&duration=${p.minutes}`);
       $("presetFeedback").textContent=`${p.name} started on unit ${Number(u)+1}.`}
   catch(e){$("presetFeedback").textContent=e.message}
@@ -252,15 +297,40 @@ $("menuReload").onclick=()=>{menuItems=null;menuParent=0;loadMenu()};
 function renderMenu(){
   if(!menuItems)return;
   const kids=menuItems.filter(m=>m.p===menuParent&&m.id!==menuParent);
+
+  // Breadcrumb: every ancestor clickable, current node plain.
   const path=[];let p=menuParent;
   while(p>=0){const m=menuItems.find(x=>x.id===p);if(!m)break;path.unshift(m);p=m.p}
-  $("crumb").innerHTML=path.map(m=>`<button onclick="gotoMenu(${m.id})">${m.n||"—"}</button>`).join(" › ")||"&nbsp;";
-  $("menuList").innerHTML=kids.map(m=>{
-    if(m.t===0)return `<div class="row"><b>${m.n}</b><button class="btn sm" onclick="gotoMenu(${m.id})">Open ›</button></div>`;
-    if(m.t===1)return `<div class="row"><b>${m.n}</b><button class="btn sm" onclick="invokeItem(${m.id})">Run</button></div>`;
-    if(m.t===3)return `<div class="row"><b>${m.n}</b><button class="btn sm" onclick="setItem(${m.id},${m.val?0:1})">${m.val?"On":"Off"}</button></div>`;
-    return `<div class="row"><div><b>${m.n}</b><small>${m.min}–${m.max}, step ${m.step}</small></div><input type="number" value="${m.val}" min="${m.min}" max="${m.max}" step="${m.step}" onchange="setItem(${m.id},this.value)"></div>`
-  }).join("")||'<p class="note">Nothing here.</p>'}
+  $("crumb").innerHTML=path.map((m,i)=>
+    i===path.length-1?`<b>${m.n}</b>`
+                     :`<button onclick="gotoMenu(${m.id})">${m.n}</button><i>›</i>`).join("")||"&nbsp;";
+
+  if(!kids.length){$("menuList").innerHTML='<div class="mlist"><div class="mempty">Nothing here.</div></div>';return}
+
+  $("menuList").innerHTML='<div class="mlist">'+kids.map(m=>{
+    const per=m.g?` · per unit`:"";
+    if(m.t===0){   // submenu
+      const n=menuItems.filter(x=>x.p===m.id).length;
+      return `<div class="mrow sub" onclick="gotoMenu(${m.id})">
+        <div class="lbl"><b>${m.n}</b><small>${n} item${n===1?"":"s"}</small></div>
+        <div class="chev">›</div></div>`;
+    }
+    if(m.t===1){   // action
+      return `<div class="mrow"><div class="lbl"><b>${m.n}</b><small>action</small></div>
+        <div class="val"><button class="btn sm" onclick="invokeItem(${m.id})">Run</button></div></div>`;
+    }
+    if(m.t===3){   // toggle
+      return `<div class="mrow"><div class="lbl"><b>${m.n}</b><small>${m.val?"on":"off"}${per}</small></div>
+        <div class="val"><button class="sw" aria-pressed="${!!m.val}"
+             onclick="setItem(${m.id},${m.val?0:1})"></button></div></div>`;
+    }
+    return `<div class="mrow"><div class="lbl"><b>${m.n}</b>
+        <small>${m.min}–${m.max}${m.step?` · step ${m.step}`:""}${per}</small></div>
+      <div class="val"><input type="number" value="${m.val}" min="${m.min}" max="${m.max}"
+           step="${m.step||1}" onchange="setItem(${m.id},this.value)">
+        <span class="u">${m.u||""}</span></div></div>`;
+  }).join("")+'</div>';
+}
 
 function gotoMenu(id){menuParent=id;renderMenu()}
 async function setItem(id,val){try{await post(`/api/set?id=${id}&unit=0&val=${val}`);$("menuFeedback").textContent="Saved.";const m=menuItems.find(x=>x.id===id);if(m)m.val=Number(val);renderMenu()}catch(e){$("menuFeedback").textContent=e.message}}
