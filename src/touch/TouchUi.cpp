@@ -514,7 +514,7 @@ void refreshPresetGrid() {
         lv_obj_set_style_border_color(s_presetFootMore, lv_color_hex(C_PRIMEDGE), 0);
         lv_obj_remove_event_cb(s_presetFootMore, onPresetMore);
         lv_obj_add_event_cb(s_presetFootMore, onPresetStart, LV_EVENT_CLICKED, nullptr);
-        lv_label_set_text(s_presetFootAltLbl, "CANCEL");
+        lv_label_set_text(s_presetFootAltLbl, "BACK");
     } else {
         snprintf(buf, sizeof(buf), pages > 1 ? "MORE %u/%u" : "MORE", s_presetPage + 1, pages);
         lv_label_set_text(s_presetFootMoreLbl, buf);
@@ -668,7 +668,7 @@ void refreshMenuGrid() {
         lv_obj_set_style_border_color(s_menuFootMore, lv_color_hex(C_STOPEDGE), 0);
         lv_obj_remove_event_cb(s_menuFootMore, onMenuMore);
         lv_obj_add_event_cb(s_menuFootMore, onMenuRun, LV_EVENT_CLICKED, nullptr);
-        lv_label_set_text(s_menuFootBackLbl, "CANCEL");   // same slot, same role
+        lv_label_set_text(s_menuFootBackLbl, "BACK");
     } else {
         snprintf(buf, sizeof(buf), pages > 1 ? "MORE %u/%u" : "MORE", s_menuPage + 1, pages);
         lv_label_set_text(s_menuFootMoreLbl, buf);
@@ -676,7 +676,7 @@ void refreshMenuGrid() {
         lv_obj_set_style_border_color(s_menuFootMore, lv_color_hex(C_BTNEDGE), 0);
         lv_obj_remove_event_cb(s_menuFootMore, onMenuRun);
         lv_obj_add_event_cb(s_menuFootMore, onMenuMore, LV_EVENT_CLICKED, nullptr);
-        lv_label_set_text(s_menuFootBackLbl, s_menuDepth ? "BACK" : "HOME");
+        lv_label_set_text(s_menuFootBackLbl, "BACK");
     }
 }
 
@@ -739,7 +739,7 @@ void buildEdit(lv_obj_t *root) {
 
     lv_obj_t *f = footer(p);
     button(f, 7,   6, 202, BTN_H, "SAVE",   C_PRIMARY, C_PRIMEDGE, onEditSave,   nullptr);
-    button(f, 215, 6, 98,  BTN_H, "CANCEL", C_BTN,     C_BTNEDGE,  onEditCancel, nullptr);
+    button(f, 215, 6, 98,  BTN_H, "BACK",   C_BTN,     C_BTNEDGE,  onEditCancel, nullptr);
 }
 
 void refreshEditor() {
@@ -773,7 +773,7 @@ void buildDry(lv_obj_t *root) {
 
     lv_obj_t *f = footer(p);
     button(f, 7,   6, 202, BTN_H, "START DRYING", C_PRIMARY, C_PRIMEDGE, onStartDry, nullptr);
-    button(f, 215, 6, 98,  BTN_H, "CANCEL",       C_BTN,     C_BTNEDGE,  onHome,     nullptr);
+    button(f, 215, 6, 98,  BTN_H, "BACK",         C_BTN,     C_BTNEDGE,  onHome,     nullptr);
 }
 
 void buildStore(lv_obj_t *root) {
@@ -784,7 +784,7 @@ void buildStore(lv_obj_t *root) {
 
     lv_obj_t *f = footer(p);
     button(f, 7,   6, 202, BTN_H, "START STORAGE", C_PRIMARY, C_PRIMEDGE, onStartStore, nullptr);
-    button(f, 215, 6, 98,  BTN_H, "CANCEL",        C_BTN,     C_BTNEDGE,  onHome,       nullptr);
+    button(f, 215, 6, 98,  BTN_H, "BACK",        C_BTN,     C_BTNEDGE,  onHome,       nullptr);
 }
 
 lv_obj_t *kvRow(lv_obj_t *p, int16_t y, const char *key) {

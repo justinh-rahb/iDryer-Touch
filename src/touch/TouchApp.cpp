@@ -57,6 +57,7 @@
 #include "TouchDisplay.h"
 #include "TouchUi.h"
 #include "MenuPresets.h"
+#include "MenuFilter.h"
 
 using namespace idryer;
 
@@ -567,6 +568,9 @@ void handleMenu() {
 
     bool first = true;
     for (uint16_t id = from; id < MENU_META_COUNT && id < from + count; id++) {
+        // Same filter the panel uses, so the two UIs hide the same things —
+        // PORT CONFIG and the portal branch. See MenuFilter.h.
+        if (!isMenuItemVisible(id)) continue;
         const MenuMeta &m = g_menu_meta[id];
         if (!first) out += ',';
         first = false;
@@ -574,6 +578,8 @@ void handleMenu() {
         out += ",\"t\":"  + String((int)m.type);
         out += ",\"n\":\"" + htmlEscape(m.title[lang] ? m.title[lang] : "") + "\"";
         out += ",\"p\":"  + String(m.parent);
+        if (m.unit[lang] && m.unit[lang][0]) out += ",\"u\":\"" + htmlEscape(m.unit[lang]) + "\"";
+        out += ",\"g\":" + String(m.scope == META_SCOPE_PER_UNIT ? 1 : 0);
         if (m.type == META_VALUE || m.type == META_TOGGLE) {
             out += ",\"min\":"  + String(m.min_val, 2);
             out += ",\"max\":"  + String(m.max_val, 2);

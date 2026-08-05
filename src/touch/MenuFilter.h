@@ -33,6 +33,17 @@ constexpr uint16_t kUiStoreTempId = 7;   // STORAGE -> the STORE page
 // leave one stray press away on a touch panel.
 constexpr uint16_t kBlockedPortConfig = 194;
 
+// PORTAL: cloud claiming, plus IGNOR EXT CMD. This fork has no portal, so CLAIM
+// is dead weight. IGNOR EXT CMD blocks the very commands these UIs send, and is
+// a confusing thing to leave one tap away.
+//
+// Caveat worth knowing: if that flag is already set, hiding it removes the only
+// way to clear it from here. Protocol v2 reports it in the Status payload, so
+// the right answer is to surface the state (see TODO) rather than offer the
+// toggle — until then, the jog wheel or the web MENU on an older build are the
+// escape hatches.
+constexpr uint16_t kBlockedPortal = 187;
+
 
 inline int16_t menuParentOf(uint16_t id) {
     return id < MENU_META_COUNT ? g_menu_meta[id].parent : -1;
@@ -50,7 +61,7 @@ inline bool isUnder(uint16_t id, uint16_t root) {
 }
 
 inline bool isBlockedMenuItem(uint16_t id) {
-    return isUnder(id, kBlockedPortConfig);
+    return isUnder(id, kBlockedPortConfig) || isUnder(id, kBlockedPortal);
 }
 
 inline bool isCoveredMenuItem(uint16_t id) {
@@ -58,7 +69,10 @@ inline bool isCoveredMenuItem(uint16_t id) {
     const int16_t store = menuParentOf(kUiStoreTempId);
     if (dry   >= 0 && isUnder(id, (uint16_t)dry))   return true;
     if (store >= 0 && isUnder(id, (uint16_t)store)) return true;
-    return isUnder(id, kMenuPresetsRoot);
+    // PRESETS deliberately NOT filtered. The MAT page is a shortcut for running
+    // one; the tree is where you edit temperatures and times, and the MY1-MY3
+    // slots are only worth having if they are editable from the panel too.
+    return false;
 }
 
 inline bool isMenuItemVisible(uint16_t id) {
