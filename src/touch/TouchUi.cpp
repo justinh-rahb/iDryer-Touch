@@ -268,6 +268,12 @@ void onPresetMore(lv_event_t *) {
     refreshPresetGrid();
 }
 
+// One permanently-attached handler per footer button, dispatching on state.
+// Swapping callbacks inside the refresh was a trap: refresh runs twice a second,
+// and every pass called add_event_cb again, so the handler accumulated and a
+// single tap advanced as many pages as there had been refreshes.
+void onPresetFootPrimary(lv_event_t *e);
+
 void onPresetStart(lv_event_t *) {
     if (s_presetSel < 0 || s_presetSel >= (int8_t)s_presetCount) return;
     const MenuPreset &p = s_presets[s_presetSel];
@@ -459,7 +465,7 @@ void buildPresets(lv_obj_t *root) {
 
     lv_obj_t *f = footer(p);
     s_presetFootMore = button(f, 7,   6, 98, BTN_H, "MORE", C_BTN, C_BTNEDGE,
-                              onPresetMore, nullptr, &lv_font_montserrat_14);
+                              onPresetFootPrimary, nullptr, &lv_font_montserrat_14);
     s_presetFootMoreLbl = lv_obj_get_child(s_presetFootMore, 0);
     s_presetFootGo   = button(f, 111, 6, 98, BTN_H, "CUSTOM", C_BTN, C_BTNEDGE,
                               onOpenDry, nullptr, &lv_font_montserrat_14);
@@ -506,28 +512,26 @@ void refreshPresetGrid() {
     }
 
     // Footer follows the selection: browse -> commit.
+    // Labels and colours only — the handler never changes.
     if (s_presetSel >= 0 && s_presetSel < (int8_t)s_presetCount) {
         const MenuPreset &p = s_presets[s_presetSel];
         snprintf(buf, sizeof(buf), "DRY %s", p.name ? p.name : "");
         lv_label_set_text(s_presetFootMoreLbl, buf);
         lv_obj_set_style_bg_color(s_presetFootMore, lv_color_hex(C_PRIMARY), 0);
         lv_obj_set_style_border_color(s_presetFootMore, lv_color_hex(C_PRIMEDGE), 0);
-        lv_obj_remove_event_cb(s_presetFootMore, onPresetMore);
-        lv_obj_add_event_cb(s_presetFootMore, onPresetStart, LV_EVENT_CLICKED, nullptr);
-        lv_label_set_text(s_presetFootAltLbl, "BACK");
     } else {
-        snprintf(buf, sizeof(buf), pages > 1 ? "MORE %u/%u" : "MORE", s_presetPage + 1, pages);
+        if (pages > 1) snprintf(buf, sizeof(buf), "MORE %u/%u", s_presetPage + 1, pages);
+        else           snprintf(buf, sizeof(buf), "MORE");
         lv_label_set_text(s_presetFootMoreLbl, buf);
         lv_obj_set_style_bg_color(s_presetFootMore, lv_color_hex(C_BTN), 0);
         lv_obj_set_style_border_color(s_presetFootMore, lv_color_hex(C_BTNEDGE), 0);
-        lv_obj_remove_event_cb(s_presetFootMore, onPresetStart);
-        lv_obj_add_event_cb(s_presetFootMore, onPresetMore, LV_EVENT_CLICKED, nullptr);
-        lv_label_set_text(s_presetFootAltLbl, "BACK");
     }
+    lv_label_set_text(s_presetFootAltLbl, "BACK");
 }
 
 void refreshMenuGrid();
 void openEditor(uint16_t id);
+void onMenuFootPrimary(lv_event_t *e);
 
 void loadMenuNode(uint16_t node) {
     s_menuNode = node;
@@ -588,6 +592,11 @@ void onMenuTap(lv_event_t *e) {
     }
 }
 
+void onMenuFootPrimary(lv_event_t *e) {
+    if (s_menuSel >= 0) onMenuRun(e);
+    else                onMenuMore(e);
+}
+
 void buildMenu(lv_obj_t *root) {
     lv_obj_t *p = newPage(root);
     s_pages[PAGE_MENU] = p;
@@ -613,7 +622,7 @@ void buildMenu(lv_obj_t *root) {
     lv_obj_t *f = footer(p);
     // Footer convention across every page: the rightmost slot is the way out
     // (BACK / HOME / CANCEL), paging and primary actions sit to its left.
-    s_menuFootMore = button(f, 7, 6, 150, BTN_H, "MORE", C_BTN, C_BTNEDGE, onMenuMore,
+    s_menuFootMore = button(f, 7, 6, 150, BTN_H, "MORE", C_BTN, C_BTNEDGE, onMenuFootPrimary,
                             nullptr, &lv_font_montserrat_14);
     s_menuFootMoreLbl = lv_obj_get_child(s_menuFootMore, 0);
     s_menuFootBack = button(f, 163, 6, 150, BTN_H, "BACK", C_BTN, C_BTNEDGE, onMenuBack,
@@ -666,18 +675,14 @@ void refreshMenuGrid() {
         lv_label_set_text(s_menuFootMoreLbl, buf);
         lv_obj_set_style_bg_color(s_menuFootMore, lv_color_hex(C_STOP), 0);
         lv_obj_set_style_border_color(s_menuFootMore, lv_color_hex(C_STOPEDGE), 0);
-        lv_obj_remove_event_cb(s_menuFootMore, onMenuMore);
-        lv_obj_add_event_cb(s_menuFootMore, onMenuRun, LV_EVENT_CLICKED, nullptr);
-        lv_label_set_text(s_menuFootBackLbl, "BACK");
     } else {
-        snprintf(buf, sizeof(buf), pages > 1 ? "MORE %u/%u" : "MORE", s_menuPage + 1, pages);
+        if (pages > 1) snprintf(buf, sizeof(buf), "MORE %u/%u", s_menuPage + 1, pages);
+        else           snprintf(buf, sizeof(buf), "MORE");
         lv_label_set_text(s_menuFootMoreLbl, buf);
         lv_obj_set_style_bg_color(s_menuFootMore, lv_color_hex(C_BTN), 0);
         lv_obj_set_style_border_color(s_menuFootMore, lv_color_hex(C_BTNEDGE), 0);
-        lv_obj_remove_event_cb(s_menuFootMore, onMenuRun);
-        lv_obj_add_event_cb(s_menuFootMore, onMenuMore, LV_EVENT_CLICKED, nullptr);
-        lv_label_set_text(s_menuFootBackLbl, "BACK");
     }
+    lv_label_set_text(s_menuFootBackLbl, "BACK");
 }
 
 void refreshEditor();
@@ -763,6 +768,11 @@ void refreshEditor() {
     if (m.step > 0.0f && m.step < 1.0f) snprintf(buf, sizeof(buf), "%.2f %s", s_editVal, unit);
     else                                snprintf(buf, sizeof(buf), "%d %s", (int)(s_editVal + 0.5f), unit);
     lv_label_set_text(s_editValLbl, buf);
+}
+
+void onPresetFootPrimary(lv_event_t *e) {
+    if (s_presetSel >= 0) onPresetStart(e);
+    else                  onPresetMore(e);
 }
 
 void buildDry(lv_obj_t *root) {
