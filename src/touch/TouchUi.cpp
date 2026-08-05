@@ -254,6 +254,13 @@ void onPresetTap(lv_event_t *e) {
     refreshPresetGrid();
 }
 
+void onPresetBack(lv_event_t *) {
+    // Rightmost slot is always "get out": drop the armed selection first, and
+    // only leave the page once nothing is selected.
+    if (s_presetSel >= 0) { s_presetSel = -1; refreshPresetGrid(); return; }
+    showPage(PAGE_HOME);
+}
+
 void onPresetMore(lv_event_t *) {
     const uint8_t pages = (s_presetCount + kPresetsPerPage - 1) / kPresetsPerPage;
     if (pages > 1) s_presetPage = (uint8_t)((s_presetPage + 1) % pages);
@@ -458,7 +465,7 @@ void buildPresets(lv_obj_t *root) {
                               onOpenDry, nullptr, &lv_font_montserrat_14);
     s_presetFootGoLbl = lv_obj_get_child(s_presetFootGo, 0);
     s_presetFootAlt  = button(f, 215, 6, 98, BTN_H, "BACK", C_BTN, C_BTNEDGE,
-                              onHome, nullptr, &lv_font_montserrat_14);
+                              onPresetBack, nullptr, &lv_font_montserrat_14);
     s_presetFootAltLbl = lv_obj_get_child(s_presetFootAlt, 0);
 }
 
@@ -507,9 +514,7 @@ void refreshPresetGrid() {
         lv_obj_set_style_border_color(s_presetFootMore, lv_color_hex(C_PRIMEDGE), 0);
         lv_obj_remove_event_cb(s_presetFootMore, onPresetMore);
         lv_obj_add_event_cb(s_presetFootMore, onPresetStart, LV_EVENT_CLICKED, nullptr);
-        lv_label_set_text(s_presetFootGoLbl, "CANCEL");
-        lv_obj_remove_event_cb(s_presetFootGo, onOpenDry);
-        lv_obj_add_event_cb(s_presetFootGo, onOpenPresets, LV_EVENT_CLICKED, nullptr);
+        lv_label_set_text(s_presetFootAltLbl, "CANCEL");
     } else {
         snprintf(buf, sizeof(buf), pages > 1 ? "MORE %u/%u" : "MORE", s_presetPage + 1, pages);
         lv_label_set_text(s_presetFootMoreLbl, buf);
@@ -517,9 +522,7 @@ void refreshPresetGrid() {
         lv_obj_set_style_border_color(s_presetFootMore, lv_color_hex(C_BTNEDGE), 0);
         lv_obj_remove_event_cb(s_presetFootMore, onPresetStart);
         lv_obj_add_event_cb(s_presetFootMore, onPresetMore, LV_EVENT_CLICKED, nullptr);
-        lv_label_set_text(s_presetFootGoLbl, "CUSTOM");
-        lv_obj_remove_event_cb(s_presetFootGo, onOpenPresets);
-        lv_obj_add_event_cb(s_presetFootGo, onOpenDry, LV_EVENT_CLICKED, nullptr);
+        lv_label_set_text(s_presetFootAltLbl, "BACK");
     }
 }
 
@@ -608,12 +611,14 @@ void buildMenu(lv_obj_t *root) {
         }
 
     lv_obj_t *f = footer(p);
-    s_menuFootBack = button(f, 7, 6, 150, BTN_H, "BACK", C_BTN, C_BTNEDGE, onMenuBack,
-                            nullptr, &lv_font_montserrat_14);
-    s_menuFootBackLbl = lv_obj_get_child(s_menuFootBack, 0);
-    s_menuFootMore = button(f, 163, 6, 150, BTN_H, "MORE", C_BTN, C_BTNEDGE, onMenuMore,
+    // Footer convention across every page: the rightmost slot is the way out
+    // (BACK / HOME / CANCEL), paging and primary actions sit to its left.
+    s_menuFootMore = button(f, 7, 6, 150, BTN_H, "MORE", C_BTN, C_BTNEDGE, onMenuMore,
                             nullptr, &lv_font_montserrat_14);
     s_menuFootMoreLbl = lv_obj_get_child(s_menuFootMore, 0);
+    s_menuFootBack = button(f, 163, 6, 150, BTN_H, "BACK", C_BTN, C_BTNEDGE, onMenuBack,
+                            nullptr, &lv_font_montserrat_14);
+    s_menuFootBackLbl = lv_obj_get_child(s_menuFootBack, 0);
 }
 
 void refreshMenuGrid() {
@@ -663,7 +668,7 @@ void refreshMenuGrid() {
         lv_obj_set_style_border_color(s_menuFootMore, lv_color_hex(C_STOPEDGE), 0);
         lv_obj_remove_event_cb(s_menuFootMore, onMenuMore);
         lv_obj_add_event_cb(s_menuFootMore, onMenuRun, LV_EVENT_CLICKED, nullptr);
-        lv_label_set_text(s_menuFootBackLbl, "CANCEL");
+        lv_label_set_text(s_menuFootBackLbl, "CANCEL");   // same slot, same role
     } else {
         snprintf(buf, sizeof(buf), pages > 1 ? "MORE %u/%u" : "MORE", s_menuPage + 1, pages);
         lv_label_set_text(s_menuFootMoreLbl, buf);
