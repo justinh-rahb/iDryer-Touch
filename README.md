@@ -68,6 +68,16 @@ switch or router. From the controller schematic
 | 4 | controller RXD | CYD GPIO22 (our TX) |
 | 6 | controller TXD | CYD GPIO27 (our RX) |
 
+Each EXT port is *either* a unit or a comms port, not both. On the schematic
+pin 4 carries `T0` and `RXD 0`, pin 6 carries `H0` and `TXD 0` — the same nets
+serve the unit's thermistor and heater or the UART, depending on what is plugged
+in. So attaching this display consumes one of the controller's three EXT ports,
+leaving two for drying units.
+
+That is the practical ceiling, and it sits just under the firmware one: the menu
+mirror is `MENU_MAX_UNITS` = 3, so a controller reporting 4 units gets clamped to
+3 with a warning.
+
 > **Verify with a meter before powering anything.** Upstream ships two diagrams
 > that do not agree: the schematic puts UART on pins 4/6 and ground on 7, while
 > [wiring.png](docs/img/wiring.png) maps the colours to pins 3/5 with ground on

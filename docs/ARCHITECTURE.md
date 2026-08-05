@@ -189,6 +189,19 @@ as a sense input only). Power the board from the RJ45's 5V into `P1` VIN.
 Pins are set by `-DIDRYER_UART_TX_PIN` / `-DIDRYER_UART_RX_PIN`; `main_v2.cpp`
 still defaults to the C3's GPIO6/7.
 
+### One EXT port is the price of the screen
+
+The controller's RJ45 EXT ports are dual-purpose. Pin 4 is both `T0` and
+`RXD 0 (GPIO01)`; pin 6 is both `H0` and `TXD 0 (GPIO00)` — the same nets are
+either a unit's thermistor and heater, or a UART for a Link. Plugging this
+display into a port therefore costs a drying unit: three ports means screen plus
+two units.
+
+Worth knowing when reading the unit-count handling. The firmware clamps to
+`MENU_MAX_UNITS` (3), which is a menu-mirror limit and sits above the practical
+one, so the clamp is a backstop rather than the constraint you will actually
+meet.
+
 ### Memory — measured, not estimated
 
 The first thing that actually broke was **not flash — it was static DRAM**.
