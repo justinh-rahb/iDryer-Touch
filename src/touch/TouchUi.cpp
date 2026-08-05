@@ -27,6 +27,7 @@
 #include "TouchDisplay.h"
 #include "MenuPresets.h"
 #include "MenuFilter.h"
+#include "version.h"
 
 namespace idryer_touch {
 namespace ui {
@@ -68,7 +69,7 @@ constexpr uint16_t MID_DRY_TIME  = 4;
 constexpr uint16_t MID_STORE_TEMP = 7;
 constexpr uint16_t MID_STORE_HUM  = 8;
 
-enum Page : uint8_t { PAGE_HOME, PAGE_PRESETS, PAGE_DRY, PAGE_STORE,
+enum Page : uint8_t { PAGE_SPLASH, PAGE_HOME, PAGE_PRESETS, PAGE_DRY, PAGE_STORE,
                       PAGE_MENU, PAGE_EDIT, PAGE_INFO, PAGE_NOLINK, PAGE_COUNT };
 
 lv_obj_t *s_pages[PAGE_COUNT] = {nullptr};
@@ -91,6 +92,16 @@ int s_dryTemp = 60, s_dryTime = 240, s_storeTemp = 45, s_storeHum = 15;
 lv_obj_t *s_kvSsid, *s_kvIp, *s_kvMcu, *s_kvFw, *s_infoNote;
 
 uint32_t s_lastTick = 0;
+
+// Startup. Nothing downstream is meaningful until the controller has answered
+// and sent its menu: Home would show zeros, presets have no temperatures, the
+// browser no tree. Rather than let a half-populated UI settle in front of the
+// user over the next half-minute, hold a splash that says which step is
+// outstanding, and hand over once there is something real to show.
+constexpr uint32_t kSplashMinMs     = 900;    // let it register as deliberate
+constexpr uint32_t kSplashGiveUpMs  = 25000;  // then stop pretending and explain
+uint32_t s_bootMs = 0;
+lv_obj_t *s_splashNet, *s_splashLink, *s_splashMenu, *s_splashHint, *s_splashSkip;
 
 // Presets: a 3x3 grid, paged rather than scrolled. 17 materials fit two pages,
 // and a 98x46 button is a comfortable target where a scroll gesture on resistive
@@ -367,6 +378,70 @@ lv_obj_t *footer(lv_obj_t *page) {
     lv_obj_set_style_border_color(f, lv_color_hex(C_LINE), 0);
     lv_obj_set_style_border_width(f, 1, 0);
     return f;
+}
+
+void onSplashSkip(lv_event_t *) { showPage(PAGE_HOME); }
+
+// Three lines rather than a bare logo: during bring-up this is the fastest way
+// to see whether Wi-Fi, the UART link or the menu transfer is the thing stuck.
+void buildSplash(lv_obj_t *root) {
+    lv_obj_t *p = newPage(root);
+    s_pages[PAGE_SPLASH] = p;
+
+    lv_obj_t *t = label(p, 0, 14, "iDryer Touch", &lv_font_montserrat_28, C_TEXT);
+    lv_obj_set_width(t, W);
+    lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *v = label(p, 0, 46, "v" VERSION_STR, &lv_font_montserrat_12, C_MUTED);
+    lv_obj_set_width(v, W);
+    lv_obj_set_style_text_align(v, LV_TEXT_ALIGN_CENTER, 0);
+
+    s_splashNet  = label(p, 24, 76,  "", &lv_font_montserrat_14, C_MUTED);
+    s_splashLink = label(p, 24, 98,  "", &lv_font_montserrat_14, C_MUTED);
+    s_splashMenu = label(p, 24, 120, "", &lv_font_montserrat_14, C_MUTED);
+    for (lv_obj_t *l : {s_splashNet, s_splashLink, s_splashMenu}) lv_obj_set_width(l, W - 48);
+
+    s_splashHint = label(p, 0, 142, "", &lv_font_montserrat_12, C_MUTED);
+    lv_obj_set_width(s_splashHint, W);
+    lv_obj_set_style_text_align(s_splashHint, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *f = footer(p);
+    s_splashSkip = button(f, 111, 6, 98, BTN_H, "SKIP", C_BTN, C_BTNEDGE, onSplashSkip, nullptr,
+                          &lv_font_montserrat_14);
+    lv_obj_add_flag(s_splashSkip, LV_OBJ_FLAG_HIDDEN);
+}
+
+void refreshSplash(const DeviceView &d) {
+    char buf[64];
+    const uint32_t age = millis() - s_bootMs;
+
+    snprintf(buf, sizeof(buf), "%s  Wi-Fi  %s",
+             d.ip[0] ? "[ok]" : "[..]", d.ip[0] ? d.ip : "connecting");
+    lv_label_set_text(s_splashNet, buf);
+    lv_obj_set_style_text_color(s_splashNet, lv_color_hex(d.ip[0] ? C_OK : C_MUTED), 0);
+
+    snprintf(buf, sizeof(buf), "%s  Controller  %s",
+             d.mcuConnected ? "[ok]" : "[..]",
+             d.mcuConnected ? (d.mcuSerial[0] ? d.mcuSerial : "linked") : "waiting");
+    lv_label_set_text(s_splashLink, buf);
+    lv_obj_set_style_text_color(s_splashLink, lv_color_hex(d.mcuConnected ? C_OK : C_MUTED), 0);
+
+    const bool menuReady = d.menuRevision > 0;
+    snprintf(buf, sizeof(buf), "%s  Menu  %s", menuReady ? "[ok]" : "[..]",
+             menuReady ? "loaded" : "waiting");
+    lv_label_set_text(s_splashMenu, buf);
+    lv_obj_set_style_text_color(s_splashMenu, lv_color_hex(menuReady ? C_OK : C_MUTED), 0);
+
+    // Offer an escape once waiting stops feeling like booting.
+    if (age > 4000) lv_obj_clear_flag(s_splashSkip, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(s_splashHint,
+                      age > 4000 ? "Check the RJ45 cable if this persists" : "");
+
+    if (age < kSplashMinMs) return;
+
+    if (d.mcuConnected && menuReady) { showPage(PAGE_HOME); return; }
+    // Stop pretending to boot: the no-link screen at least says what is wrong.
+    if (age > kSplashGiveUpMs) showPage(d.mcuConnected ? PAGE_HOME : PAGE_NOLINK);
 }
 
 void buildHome(lv_obj_t *root) {
@@ -879,6 +954,8 @@ void refresh() {
     snprintf(buf, sizeof(buf), "%s%s", d.ip, d.apMode ? " AP" : "");
     lv_label_set_text(s_hdrRight, buf);
 
+    if (s_page == PAGE_SPLASH) { refreshSplash(d); return; }
+
     // A missing controller takes over the screen, but only from Home — it must
     // not yank the user out of a setup page they are part-way through.
     if (!d.mcuConnected && s_page == PAGE_HOME)      showPage(PAGE_NOLINK);
@@ -981,6 +1058,7 @@ void begin() {
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
 
     buildHeader(root);
+    buildSplash(root);
     buildHome(root);
     buildPresets(root);
     buildMenu(root);
@@ -998,7 +1076,8 @@ void begin() {
         if (d > 0) s_dryTime = d;
     }
 
-    showPage(PAGE_HOME);
+    s_bootMs = millis();
+    showPage(PAGE_SPLASH);
     refresh();
     display::setBacklight(display::backlight());
 }
