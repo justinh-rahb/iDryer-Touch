@@ -36,6 +36,9 @@ python3 emulate_controller.py --port /dev/ttyUSB0 --units 2 --fw-major 2
 """
 
 import argparse
+import json
+import re
+import pathlib
 import struct
 import sys
 import time
@@ -54,6 +57,9 @@ FLAG_IS_ACK       = 0x02
 FLAG_ERROR        = 0x04
 FLAG_FRAGMENTED   = 0x08
 FLAG_LAST_FRAGMENT = 0x10
+
+UART_MAX_PAYLOAD         = 200   # contracts/_generated/uart_protocol.h
+CONFIG_CHUNK_HEADER_SIZE = 6     # transferId(2) totalSize(2) chunkIndex(1) pad(1)
 
 # MessageKind
 KIND_HELLO          = 0x01
@@ -272,6 +278,138 @@ class SimUnit:
         return self.running
 
 
+
+# ── Menu config (answer to GetConfig) ─────────────────────────────────────────
+# The device asks for this after every Hello and cannot render its menu browser
+# without it. Shape is dictated by menu_parseFullConfig() in lib/idryer-menu:
+#
+#   * a "vals" object is mandatory — the parser returns false without it
+#   * the literal key "full" must be present, otherwise ConfigReceiver::isDelta()
+#     treats the payload as a delta (it greps for "full" in the raw JSON)
+#   * "rev" (or "v") is the revision the UI displays
+#   * per-unit ids carry an array, global ids a scalar; scope comes from
+#     g_menu_meta on the device, so sending the wrong shape silently misfiles
+#
+# Ids below are the documented ones from docs/menu-json-format.json.
+
+MENU_META_H = pathlib.Path(__file__).resolve().parent.parent / "lib/idryer-menu/src/menu_meta.h"
+
+# Entry shape in the generated header:
+#   { 3, { "..", ".." }, { "..", ".." },
+#     META_VALUE, 2, -1, 0,
+#     META_VT_F32, 30.0f, 110.0f, 1.0f, META_SCOPE_PER_UNIT, nullptr },
+_META_RE = re.compile(
+    r"\{\s*(\d+),\s*\{.*?\},\s*\{.*?\},\s*"
+    r"(META_\w+),\s*-?\d+,\s*-?\d+,\s*\d+,\s*"
+    r"META_VT_(\w+),\s*([-\d.eE]+)f,\s*([-\d.eE]+)f,\s*([-\d.eE]+)f,\s*"
+    r"(META_SCOPE_\w+)",
+    re.S)
+
+
+def load_menu_meta():
+    """Parse the generated menu metadata so emitted values are always in range.
+
+    Hardcoding ids is a trap: docs/menu-json-format.json still lists v1's
+    key_ids, where 13 was PRESET_PLA_TEMP. On controller v2, id 13 is FIRST
+    STAGE with range 1..10, so the documented value of 55 is nonsense. Reading
+    the same header the firmware compiles against keeps the two in step.
+    """
+    try:
+        text = MENU_META_H.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    out = []
+    for m in _META_RE.finditer(text):
+        mid, mtype, _vt, lo, hi, _step, scope = m.groups()
+        if mtype not in ("META_VALUE", "META_TOGGLE"):
+            continue          # submenu/action items hold no value
+        out.append({
+            "id": int(mid),
+            "toggle": mtype == "META_TOGGLE",
+            "min": float(lo),
+            "max": float(hi),
+            "per_unit": scope == "META_SCOPE_PER_UNIT",
+        })
+    return out
+
+
+def build_menu_json(units: int, rev: int = 8, overrides=None) -> bytes:
+    """Full-config JSON for menu_parseFullConfig().
+
+    Requirements come from the parser, not from taste:
+      * "vals" is mandatory — it returns false without it
+      * the literal "full" must appear, or ConfigReceiver::isDelta() greps for
+        it, misses, and treats the whole thing as a delta
+      * per-unit ids take an array, globals a scalar; the device decides which
+        from g_menu_meta, so the wrong shape silently misfiles the value
+    """
+    meta = load_menu_meta()
+    overrides = overrides or {}
+    parts = []
+
+    # Language and units-count are positional, not fixed ids: menu_commands.cpp
+    # takes them as MENU_META_COUNT-1 and -2. (docs/menu-json-format.json still
+    # names 144/143 from v1, where they are now a submenu and an action.)
+    #
+    # They need real values rather than a mid-range guess. Language especially —
+    # its range is 0..1, whose midpoint rounds to 0 (Russian), and because vals
+    # is parsed after the document root it silently overrides "lang":"en" there.
+    count = len(meta) and max(i["id"] for i in meta) + 1
+    total_ids = 202 if not count else max(count, 202)
+    lang_id, units_id = total_ids - 1, total_ids - 2
+    pinned = {lang_id: 1, units_id: units}   # 1 = en
+
+    if meta:
+        for item in meta:
+            lo, hi = item["min"], item["max"]
+            # Pins are the *starting* value, not a lock — an inbound `set` must
+            # still win, or changing the language from the UI would appear to be
+            # accepted and then be silently reverted by the next config echo.
+            if item["id"] in pinned:
+                v = pinned[item["id"]]
+            elif item["toggle"]:
+                v = 0
+            elif hi > lo:
+                v = round(lo + (hi - lo) * 0.5)      # mid-range, always legal
+            else:
+                v = round(lo)
+            if item["per_unit"]:
+                vals_u = [overrides.get((item["id"], u), v) for u in range(units)]
+                parts.append(f'"{item["id"]}":{json.dumps(vals_u)}')
+            else:
+                parts.append(f'"{item["id"]}":{overrides.get((item["id"], 0), v)}')
+    else:
+        # Header not found (running the tool standalone) — minimal fallback.
+        for i in (3, 4, 7, 8):
+            parts.append(f'"{i}":{json.dumps([60] * units)}')
+
+    body = ",".join(parts)
+    doc = (f'{{"rev":{rev},"full":true,"units":{units},'
+           f'"active":0,"lang":"en","vals":{{{body}}}}}')
+    return doc.encode()
+
+
+def send_config(ser, state, units: int):
+    """Chunk the menu JSON over ConfigPush frames."""
+    payload = build_menu_json(units, rev=state.get('config_rev', 8),
+                              overrides=state.get('overrides', {}))
+    total = len(payload)
+    chunk_max = UART_MAX_PAYLOAD - CONFIG_CHUNK_HEADER_SIZE
+    transfer_id = state['config_tid'] = (state.get('config_tid', 0) + 1) & 0x7FFF
+
+    idx = 0
+    for off in range(0, total, chunk_max):
+        data = payload[off:off + chunk_max]
+        last = (off + len(data)) >= total
+        # transferId(u16) totalSize(u16) chunkIndex(u8) pad(u8)
+        head = struct.pack('<HHBB', transfer_id, total, idx, 0)
+        flags = FLAG_ACK_REQUIRED | (FLAG_LAST_FRAGMENT if last else 0)
+        state['seq'] = send_frame(ser, KIND_CONFIG_PUSH, head + data, state['seq'], flags)
+        idx += 1
+    print(f"[TX] Config: {total}B in {idx} chunk(s), tid={transfer_id}, "
+          f"rev={state.get('config_rev', 8)}")
+
+
 def make_unit_config(unit_id: int, caps: int, scales: list, rfid: list) -> bytes:
     """UnitConfig: 12 байт."""
     scales_b = bytes((scales + [0xFF] * 4)[:4])
@@ -456,6 +594,8 @@ def handle_frame(ser, kind, flags, seq, payload, state):
                 print("      -> faults cleared")
             elif cmd_code == CMD_FIND:
                 print(f"      -> find unit {unit_id} (beep)")
+            elif cmd_code == CMD_GET_CONFIG:
+                send_config(ser, state, len(units))
         else:
             print(f"[RX] Command (короткий payload {len(payload)}B)")
         if flags & FLAG_ACK_REQUIRED:
@@ -475,6 +615,24 @@ def handle_frame(ser, kind, flags, seq, payload, state):
         if flags & FLAG_ACK_REQUIRED:
             ack = make_config_ack(seq)
             state['seq'] = send_frame(ser, KIND_CONFIG_ACK, ack, state['seq'], FLAG_IS_ACK)
+
+        # Apply the write and echo the new config back, which is what actually
+        # updates the device's menu cache. Without this a 'set' is acknowledged
+        # and silently discarded, so the UI appears to accept edits that never
+        # stick — the same trap the hardcoded status had.
+        try:
+            req = json.loads(json_data)
+        except Exception:
+            req = None
+        if isinstance(req, dict) and req.get('cmd') == 'set' and 'id' in req:
+            mid = int(req['id']); unit = int(req.get('unit', 0))
+            val = req.get('val', 0)
+            state.setdefault('overrides', {})[(mid, unit)] = val
+            state['config_rev'] = state.get('config_rev', 8) + 1
+            print(f"      -> set id={mid} unit={unit} val={val}; rev now {state['config_rev']}")
+            send_config(ser, state, len(state['units']))
+        elif isinstance(req, dict) and req.get('cmd') == 'invoke':
+            print(f"      -> invoke id={req.get('id')}")
 
     elif kind == KIND_HEARTBEAT:
         if len(payload) >= 9:
