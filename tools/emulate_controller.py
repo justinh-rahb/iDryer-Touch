@@ -686,10 +686,58 @@ def handle_frame(ser, kind, flags, seq, payload, state):
 # ---------------------------------------------------------------------------
 # Главный цикл
 # ---------------------------------------------------------------------------
+
+def resolve_port(requested: str) -> str:
+    """Turn --port into a real device, or explain clearly why it cannot.
+
+    A shell glob for the adapter is a trap: if it is unplugged, zsh fails the
+    glob, $() yields an empty string, and pyserial raises a traceback about
+    opening ''. Do the lookup here so the failure says what is actually wrong.
+    """
+    from serial.tools import list_ports
+
+    def candidates():
+        out = []
+        for p in list_ports.comports():
+            name = p.device
+            if "Bluetooth" in name or "debug-console" in name:
+                continue
+            out.append(p)
+        return out
+
+    if requested and requested != "auto":
+        import os
+        if os.path.exists(requested):
+            return requested
+        print(f"[HOST] Port not found: {requested}")
+        found = candidates()
+        if found:
+            print("[HOST] Available:")
+            for p in found:
+                print(f"         --port {p.device:34} {p.description}")
+        else:
+            print("[HOST] No USB serial adapters are connected.")
+        raise SystemExit(2)
+
+    found = candidates()
+    if not found:
+        print("[HOST] No USB serial adapter found. Plug one in, or pass --port.")
+        raise SystemExit(2)
+    if len(found) == 1:
+        print(f"[HOST] Auto-selected {found[0].device} ({found[0].description})")
+        return found[0].device
+
+    print("[HOST] Several serial ports are connected — say which one:")
+    for p in found:
+        print(f"         --port {p.device:34} {p.description}")
+    print("[HOST] (the CYD's own CH340 is its console, not the controller link)")
+    raise SystemExit(2)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Эмулятор RP2040 для UART-протокола iDryer")
-    parser.add_argument("--port", default="/dev/cu.usbserial-130",
+    parser.add_argument("--port", default="auto",
                         help="UART порт")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--session", type=int, default=120,
@@ -701,6 +749,8 @@ def main():
     parser.add_argument("--rfid", action="store_true",
                         help="Отправить RFID tag_detected событие")
     args = parser.parse_args()
+
+    args.port = resolve_port(args.port)
 
     ser = serial.Serial()
     ser.port = args.port

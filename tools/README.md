@@ -10,8 +10,15 @@ UIs against something that talks back.
 Only needs `pyserial`.
 
 ```bash
-python3 tools/emulate_controller.py --port /dev/cu.usbserial-XXXX --units 2
+~/.platformio/penv/bin/python tools/emulate_controller.py --units 3 --session 86400
 ```
+
+`--port` defaults to `auto`: with one USB serial adapter connected it is picked
+automatically, and with several the tool lists them and asks. Port numbers change
+across replugs (`usbserial-210` becomes `usbserial-10`), so avoid pinning one —
+and avoid a shell glob, which fails confusingly when the adapter is unplugged.
+
+Use PlatformIO's Python. The system one has no `pyserial`.
 
 It sends Hello two seconds after start, then telemetry every 5 s, status every
 10 s and heartbeats, and it responds to HelloRequest, Command and ConfigPush
