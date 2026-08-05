@@ -38,6 +38,7 @@ static const char kTouchDashboardHtml[] PROGMEM = R"HTML(
    Word labels do not fit a 44px box — "STORE" overflows its own highlight. */
 .tab::before{content:"";position:absolute;inset:0;margin:auto;display:block;width:23px;height:23px;background:currentColor}
 .tab[data-page=home]::before{-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3 10 9-7 9 7'/%3E%3Cpath d='M5 9v11h14V9'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3 10 9-7 9 7'/%3E%3Cpath d='M5 9v11h14V9'/%3E%3C/svg%3E") center/contain no-repeat}
+.tab[data-page=presets]::before{-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3Ccircle cx='12' cy='12' r='2.5'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3Ccircle cx='12' cy='12' r='2.5'/%3E%3C/svg%3E") center/contain no-repeat}
 .tab[data-page=dry]::before{-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2c3 3 3 6 0 9'/%3E%3Cpath d='M7 5c3 3 3 7 0 11'/%3E%3Cpath d='M17 5c3 3 3 7 0 11'/%3E%3Cpath d='M4 19c4 2 12 2 16 0'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2c3 3 3 6 0 9'/%3E%3Cpath d='M7 5c3 3 3 7 0 11'/%3E%3Cpath d='M17 5c3 3 3 7 0 11'/%3E%3Cpath d='M4 19c4 2 12 2 16 0'/%3E%3C/svg%3E") center/contain no-repeat}
 .tab[data-page=store]::before{-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='4' rx='1'/%3E%3Cpath d='M5 8v11h14V8'/%3E%3Cpath d='M10 12h4'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='4' rx='1'/%3E%3Cpath d='M5 8v11h14V8'/%3E%3Cpath d='M10 12h4'/%3E%3C/svg%3E") center/contain no-repeat}
 .tab[data-page=menu]::before{-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h10'/%3E%3Cpath d='M4 12h16'/%3E%3Cpath d='M4 17h7'/%3E%3Ccircle cx='18' cy='7' r='2'/%3E%3Ccircle cx='15' cy='17' r='2'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h10'/%3E%3Cpath d='M4 12h16'/%3E%3Cpath d='M4 17h7'/%3E%3Ccircle cx='18' cy='7' r='2'/%3E%3Ccircle cx='15' cy='17' r='2'/%3E%3C/svg%3E") center/contain no-repeat}
@@ -87,6 +88,12 @@ input,select{width:100%;min-height:43px;background:#0c131d;border:1px solid #385
 .row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid #1b2634}
 .row:last-child{border-bottom:0}.row b{font-weight:600;font-size:14px}.row small{display:block;color:var(--muted);font-size:11px}
 .row input{width:110px;min-height:36px;text-align:right}
+.preset-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:12px}
+.pc{background:var(--panel2);border:1px solid var(--edge,#233247);border-radius:9px;padding:11px}
+.pc b{display:block;font-size:15px;margin-bottom:8px}
+.pc .f{display:grid;grid-template-columns:auto 1fr;gap:6px;align-items:center;margin:5px 0;font-size:11px;color:var(--muted)}
+.pc .f input{width:100%;min-height:34px;text-align:right}
+.pc .btn{width:100%;margin-top:9px;min-height:38px}
 .crumb{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--muted)}
 .crumb button{background:none;border:0;color:var(--accent);cursor:pointer;font:inherit;padding:0}
 .hidden{display:none}
@@ -100,7 +107,8 @@ input,select{width:100%;min-height:43px;background:#0c131d;border:1px solid #385
 <img class="brand" src="/logo.png" alt="iDryer" width="44" height="44">
 <div class="connection"><i class="dot" id="dot"></i><span id="conn">Connecting</span></div>
 <button class="tab" data-page="home" aria-selected="true" title="Dashboard">HOME</button>
-<button class="tab" data-page="dry" title="Drying">DRY</button>
+<button class="tab" data-page="presets" title="Material presets">MAT</button>
+<button class="tab" data-page="dry" title="Manual drying">DRY</button>
 <button class="tab" data-page="store" title="Storage">STORE</button>
 <button class="tab" data-page="menu" title="Controller menu">MENU</button>
 <a class="tab settings" href="/setup" aria-label="Settings" title="Settings">&#9881;</a>
@@ -112,6 +120,12 @@ input,select{width:100%;min-height:43px;background:#0c131d;border:1px solid #385
 <div class="units" id="units"></div>
 <p class="footer"><a href="https://github.com/justinh-rahb/iDryer-Touch" target="_blank" rel="noopener">iDryer Touch <span id="version">—</span></a> · <span id="mcu">controller not detected</span></p>
 </section>
+
+<section class="page" data-content="presets"><h2>Material presets <button class="btn sm" id="presetReload">Refresh</button></h2>
+<p>Read from the controller's own preset menu. Editing a temperature or time writes it back, so the MY1–MY3 slots are yours to define.</p>
+<label>Unit<select id="presetUnit"></select></label>
+<div id="presetGrid" class="preset-cards"></div>
+<div class="feedback" id="presetFeedback"></div></section>
 
 <section class="page" data-content="dry"><h2>Start drying</h2>
 <p>Runs the heater at a target temperature for a set time, then stops. Values are sent straight to the controller.</p>
@@ -142,10 +156,13 @@ const MODES=["Idle","Drying","Storage","Profile","Fault"];
 let state=null,menuItems=null,menuParent=0;
 
 document.querySelectorAll(".tab[data-page]").forEach(b=>b.onclick=()=>showPage(b.dataset.page));
-function showPage(p){document.querySelectorAll(".tab[data-page]").forEach(b=>b.setAttribute("aria-selected",b.dataset.page===p));document.querySelectorAll("[data-content]").forEach(s=>s.classList.toggle("active",s.dataset.content===p));if(p==="menu"&&!menuItems)loadMenu()}
+function showPage(p){document.querySelectorAll(".tab[data-page]").forEach(b=>b.setAttribute("aria-selected",b.dataset.page===p));document.querySelectorAll("[data-content]").forEach(s=>s.classList.toggle("active",s.dataset.content===p));if(p==="menu"&&!menuItems)loadMenu();if(p==="presets"&&!presets.length)loadPresets()}
 
 async function post(path){const r=await fetch(path,{method:"POST"});const d=await r.json().catch(()=>({error:"Request failed"}));if(!r.ok)throw Error(d.error||"Request failed");return d}
 function dur(s){if(!s)return"—";const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?h+"h "+String(m).padStart(2,"0")+"m":m+"m"}
+// Both setpoints in one box: "what I asked for" is a single idea, and it keeps
+// the run length visible without spending another metric tile.
+function tgt(u){const t=Number(u.targetTempC).toFixed(0)+"°C";return u.durationS?t+" · "+dur(u.durationS):t}
 function num(v,suffix,digits=1){return(v===undefined||v===null)?"—":Number(v).toFixed(digits)+suffix}
 
 function unitCard(u,i){
@@ -157,7 +174,7 @@ function unitCard(u,i){
   <div class="details">
     <div class="metric"><span>Air temp</span><strong>${num(u.airTempC,"°C")}</strong></div>
     <div class="metric"><span>Humidity</span><strong>${num(u.airHumidity,"%")}</strong></div>
-    <div class="metric"><span>Target</span><strong>${active?num(u.targetTempC,"°C",0):"—"}</strong></div>
+    <div class="metric"><span>Target</span><strong>${active?tgt(u):"—"}</strong></div>
     <div class="metric"><span>Heater</span><strong>${num(u.heaterPower*100,"%",0)}</strong></div>
     <div class="metric"><span>Fan</span><strong>${u.fanOn?"On":"Off"}</strong></div>
     <div class="metric"><span>Elapsed</span><strong>${active?dur(u.elapsedS):"—"}</strong></div>
@@ -185,6 +202,40 @@ $("stopStore").onclick=async()=>{try{await post("/api/command?do=stop&unit="+$("
 
 // Menu tree. Fetched in pages so the controller's ~26 KB tree never has to be
 // assembled in one buffer on the ESP32 side.
+let presets=[];
+async function loadPresets(){
+  $("presetFeedback").textContent="Loading…";
+  try{
+    const r=await fetch("/api/presets"); const d=await r.json();
+    presets=d.presets||[]; $("presetFeedback").textContent="";
+    renderPresets();
+  }catch(e){$("presetFeedback").textContent="Could not load presets."}
+}
+function renderPresets(){
+  const sel=$("presetUnit");
+  if(state&&sel.options.length!==state.unitsCount){sel.innerHTML="";for(let i=0;i<state.unitsCount;i++)sel.add(new Option("Unit "+(i+1),i))}
+  $("presetGrid").innerHTML=presets.map((p,i)=>`<div class="pc"><b>${p.name}</b>
+    <div class="f"><span>Temp °C</span><input type="number" value="${p.temp}" onchange="savePreset(${i},'temp',this.value)"></div>
+    <div class="f"><span>Time min</span><input type="number" value="${p.minutes}" onchange="savePreset(${i},'minutes',this.value)"></div>
+    <button class="btn primary" onclick="dryPreset(${i})">Dry ${p.name}</button></div>`).join("")
+    ||'<p class="note">No presets reported by the controller.</p>';
+}
+async function savePreset(i,field,val){
+  const p=presets[i], id=field==="temp"?p.tempId:p.timeId;
+  try{await post(`/api/set?id=${id}&unit=0&val=${val}`);p[field]=Number(val);$("presetFeedback").textContent=p.name+" updated."}
+  catch(e){$("presetFeedback").textContent=e.message}
+}
+// Sends an ordinary drying command with an explicit unitId rather than invoking
+// the preset's own START action — that action is global-scope, so the unit it
+// would run on is the controller's choice.
+async function dryPreset(i){
+  const p=presets[i], u=$("presetUnit").value||0;
+  try{await post(`/api/command?do=drying&unit=${u}&temperature=${p.temp}&duration=${p.minutes}`);
+      $("presetFeedback").textContent=`${p.name} started on unit ${Number(u)+1}.`}
+  catch(e){$("presetFeedback").textContent=e.message}
+}
+$("presetReload").onclick=loadPresets;
+
 async function loadMenu(){
   $("menuFeedback").textContent="Loading…";
   try{

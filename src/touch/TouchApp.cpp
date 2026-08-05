@@ -56,6 +56,7 @@
 #include "TouchState.h"
 #include "TouchDisplay.h"
 #include "TouchUi.h"
+#include "MenuPresets.h"
 
 using namespace idryer;
 
@@ -572,6 +573,30 @@ void handleMenu() {
     s_server.send(200, "application/json", out);
 }
 
+// Material presets, enumerated from the controller's menu (see MenuPresets.h).
+// Exposed as its own endpoint so the dashboard does not have to rebuild the
+// submenu tree from /api/menu just to draw a grid.
+void handlePresets() {
+    MenuPreset presets[kMaxPresets];
+    const uint8_t n = collectPresets(presets, kMaxPresets, g_menu_cache.getLang());
+
+    String out;
+    out.reserve(1024);
+    out += "{\"count\":" + String(n) + ",\"presets\":[";
+    for (uint8_t i = 0; i < n; i++) {
+        if (i) out += ',';
+        out += "{\"id\":"      + String(presets[i].id);
+        out += ",\"name\":\"" + htmlEscape(presets[i].name) + "\"";
+        out += ",\"tempId\":"  + String(presets[i].tempId);
+        out += ",\"timeId\":"  + String(presets[i].timeId);
+        out += ",\"temp\":"    + String(presetTemp(presets[i]));
+        out += ",\"minutes\":" + String(presetMinutes(presets[i]));
+        out += '}';
+    }
+    out += "]}";
+    s_server.send(200, "application/json", out);
+}
+
 void handleSetPost() {
     if (!s_server.hasArg("id") || !s_server.hasArg("val")) {
         s_server.send(400, "application/json", "{\"error\":\"id and val required\"}");
@@ -792,6 +817,7 @@ void configureRoutes() {
     s_server.on("/fw",             HTTP_GET,  handleFirmwarePage);
     s_server.on("/api/status",     HTTP_GET,  handleStatus);
     s_server.on("/api/menu",       HTTP_GET,  handleMenu);
+    s_server.on("/api/presets",    HTTP_GET,  handlePresets);
     s_server.on("/api/set",        HTTP_POST, handleSetPost);
     s_server.on("/api/invoke",     HTTP_POST, handleInvokePost);
     s_server.on("/api/command",    HTTP_POST, handleCommandPost);

@@ -25,6 +25,7 @@
 #include "TouchUi.h"
 #include "TouchState.h"
 #include "TouchDisplay.h"
+#include "MenuPresets.h"
 
 namespace idryer_touch {
 namespace ui {
@@ -66,7 +67,7 @@ constexpr uint16_t MID_DRY_TIME  = 4;
 constexpr uint16_t MID_STORE_TEMP = 7;
 constexpr uint16_t MID_STORE_HUM  = 8;
 
-enum Page : uint8_t { PAGE_HOME, PAGE_DRY, PAGE_STORE, PAGE_INFO, PAGE_NOLINK, PAGE_COUNT };
+enum Page : uint8_t { PAGE_HOME, PAGE_PRESETS, PAGE_DRY, PAGE_STORE, PAGE_INFO, PAGE_NOLINK, PAGE_COUNT };
 
 lv_obj_t *s_pages[PAGE_COUNT] = {nullptr};
 Page      s_page = PAGE_HOME;
@@ -88,6 +89,22 @@ int s_dryTemp = 60, s_dryTime = 240, s_storeTemp = 45, s_storeHum = 15;
 lv_obj_t *s_kvSsid, *s_kvIp, *s_kvMcu, *s_kvFw, *s_infoNote;
 
 uint32_t s_lastTick = 0;
+
+// Presets: a 3x3 grid, paged rather than scrolled. 17 materials fit two pages,
+// and a 98x46 button is a comfortable target where a scroll gesture on resistive
+// is not.
+constexpr uint8_t kPresetCols = 3, kPresetRows = 3;
+constexpr uint8_t kPresetsPerPage = kPresetCols * kPresetRows;
+MenuPreset s_presets[kMaxPresets];
+uint8_t    s_presetCount = 0;
+uint8_t    s_presetPage  = 0;
+int8_t     s_presetSel   = -1;          // index into s_presets, -1 = none
+lv_obj_t  *s_presetBtn[kPresetsPerPage] = {nullptr};
+lv_obj_t  *s_presetLbl[kPresetsPerPage] = {nullptr};
+lv_obj_t  *s_presetSubLbl[kPresetsPerPage] = {nullptr};
+lv_obj_t  *s_presetFootMore, *s_presetFootMoreLbl;
+lv_obj_t  *s_presetFootGo,   *s_presetFootGoLbl;
+lv_obj_t  *s_presetFootAlt,  *s_presetFootAltLbl;
 
 // ── Small styling helpers ────────────────────────────────────────────────────
 
@@ -190,7 +207,43 @@ void onCycleUnit(lv_event_t *) {
 }
 void onOpenInfo(lv_event_t *)  { showPage(PAGE_INFO); }
 void onHome(lv_event_t *)      { showPage(PAGE_HOME); }
+void refreshPresetGrid();
+
+void onOpenPresets(lv_event_t *) {
+    s_presetSel = -1;
+    s_presetPage = 0;
+    showPage(PAGE_PRESETS);
+    refreshPresetGrid();
+}
 void onOpenDry(lv_event_t *)   { showPage(PAGE_DRY); }
+
+void onPresetTap(lv_event_t *e) {
+    const uint8_t slot = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+    const uint8_t idx  = s_presetPage * kPresetsPerPage + slot;
+    if (idx >= s_presetCount) return;
+    // Select rather than launch. A stray press on a resistive panel should not
+    // start a heater; the footer becomes the confirmation.
+    s_presetSel = (s_presetSel == (int8_t)idx) ? -1 : (int8_t)idx;
+    refreshPresetGrid();
+}
+
+void onPresetMore(lv_event_t *) {
+    const uint8_t pages = (s_presetCount + kPresetsPerPage - 1) / kPresetsPerPage;
+    if (pages > 1) s_presetPage = (uint8_t)((s_presetPage + 1) % pages);
+    s_presetSel = -1;
+    refreshPresetGrid();
+}
+
+void onPresetStart(lv_event_t *) {
+    if (s_presetSel < 0 || s_presetSel >= (int8_t)s_presetCount) return;
+    const MenuPreset &p = s_presets[s_presetSel];
+    // Ordinary drying command with an explicit unitId, not the preset's own
+    // START action — that action is global scope, so which unit it runs on is
+    // the controller's choice. See MenuPresets.h.
+    cmdStartDrying(s_unit, presetTemp(p), (uint32_t)presetMinutes(p));
+    s_presetSel = -1;
+    showPage(PAGE_HOME);
+}
 void onOpenStore(lv_event_t *) { showPage(PAGE_STORE); }
 void onStop(lv_event_t *)      { cmdStop(s_unit); }
 void onRetry(lv_event_t *)     { cmdRequestConfig(); }
@@ -282,8 +335,8 @@ void buildHome(lv_obj_t *root) {
 
     s_modeDot = panel(p, 8, 12, 8, 8, C_IDLE, 0, 4);
     s_modeLbl = label(p, 22, 5, "--", &lv_font_montserrat_16, C_TEXT);
-    s_targetLbl = label(p, 180, 8, "", &lv_font_montserrat_12, C_MUTED);
-    lv_obj_set_width(s_targetLbl, 132);
+    s_targetLbl = label(p, 150, 8, "", &lv_font_montserrat_12, C_MUTED);
+    lv_obj_set_width(s_targetLbl, 162);
     lv_obj_set_style_text_align(s_targetLbl, LV_TEXT_ALIGN_RIGHT, 0);
 
     // Two readouts, not six: these are the numbers you walk up to read.
@@ -316,7 +369,7 @@ void buildHome(lv_obj_t *root) {
     lv_obj_set_style_text_align(s_lineR, LV_TEXT_ALIGN_RIGHT, 0);
 
     lv_obj_t *f = footer(p);
-    s_btnDry  = button(f, 7,   6, 98, BTN_H, "DRY",   C_BTN,  C_BTNEDGE,  onOpenDry,   nullptr);
+    s_btnDry  = button(f, 7,   6, 98, BTN_H, "DRY",   C_BTN,  C_BTNEDGE,  onOpenPresets, nullptr);
                 button(f, 111, 6, 98, BTN_H, "STORE", C_BTN,  C_BTNEDGE,  onOpenStore, nullptr);
     s_btnStop = button(f, 215, 6, 98, BTN_H, "STOP",  C_STOP, C_STOPEDGE, onStop,      nullptr);
 }
@@ -338,6 +391,91 @@ lv_obj_t *stepper(lv_obj_t *page, int16_t y, const char *caption,
     lv_obj_set_style_text_color(v, lv_color_hex(C_TEXT), 0);
     lv_obj_center(v);
     return v;
+}
+
+void buildPresets(lv_obj_t *root) {
+    lv_obj_t *p = newPage(root);
+    s_pages[PAGE_PRESETS] = p;
+
+    // 3 cols x 3 rows in the 156 px body: 3*46 + 2*6 = 150, and 98 px wide.
+    constexpr int16_t bw = 98, bh = 46, gap = 6, x0 = 7, y0 = 4;
+    for (uint8_t r = 0; r < kPresetRows; r++) {
+        for (uint8_t c = 0; c < kPresetCols; c++) {
+            const uint8_t slot = r * kPresetCols + c;
+            lv_obj_t *b = button(p, x0 + c * (bw + gap), y0 + r * (bh + gap),
+                                 bw, bh, "", C_BTN, C_BTNEDGE, onPresetTap,
+                                 (void *)(uintptr_t)slot, &lv_font_montserrat_14);
+            // button() centres one label; add a second line under it.
+            s_presetBtn[slot] = b;
+            s_presetLbl[slot] = lv_obj_get_child(b, 0);
+            lv_obj_align(s_presetLbl[slot], LV_ALIGN_TOP_MID, 0, 6);
+            s_presetSubLbl[slot] = label(b, 0, 27, "", &lv_font_montserrat_12, C_MUTED);
+            lv_obj_set_width(s_presetSubLbl[slot], bw);
+            lv_obj_set_style_text_align(s_presetSubLbl[slot], LV_TEXT_ALIGN_CENTER, 0);
+        }
+    }
+
+    lv_obj_t *f = footer(p);
+    s_presetFootMore = button(f, 7,   6, 98, BTN_H, "MORE", C_BTN, C_BTNEDGE,
+                              onPresetMore, nullptr, &lv_font_montserrat_14);
+    s_presetFootMoreLbl = lv_obj_get_child(s_presetFootMore, 0);
+    s_presetFootGo   = button(f, 111, 6, 98, BTN_H, "CUSTOM", C_BTN, C_BTNEDGE,
+                              onOpenDry, nullptr, &lv_font_montserrat_14);
+    s_presetFootGoLbl = lv_obj_get_child(s_presetFootGo, 0);
+    s_presetFootAlt  = button(f, 215, 6, 98, BTN_H, "BACK", C_BTN, C_BTNEDGE,
+                              onHome, nullptr, &lv_font_montserrat_14);
+    s_presetFootAltLbl = lv_obj_get_child(s_presetFootAlt, 0);
+}
+
+void refreshPresetGrid() {
+    char buf[40];
+    const uint8_t pages = s_presetCount ? (s_presetCount + kPresetsPerPage - 1) / kPresetsPerPage : 1;
+
+    for (uint8_t slot = 0; slot < kPresetsPerPage; slot++) {
+        const uint8_t idx = s_presetPage * kPresetsPerPage + slot;
+        lv_obj_t *b = s_presetBtn[slot];
+        if (!b) continue;
+        if (idx >= s_presetCount) {
+            lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_clear_flag(b, LV_OBJ_FLAG_HIDDEN);
+        const MenuPreset &p = s_presets[idx];
+        lv_label_set_text(s_presetLbl[slot], p.name ? p.name : "?");
+
+        const int mins = presetMinutes(p);
+        if (mins >= 60) snprintf(buf, sizeof(buf), "%dC %dh%02d", presetTemp(p), mins / 60, mins % 60);
+        else            snprintf(buf, sizeof(buf), "%dC %dm", presetTemp(p), mins);
+        lv_label_set_text(s_presetSubLbl[slot], buf);
+
+        const bool sel = (s_presetSel == (int8_t)idx);
+        lv_obj_set_style_bg_color(b, lv_color_hex(sel ? C_PRIMARY : C_BTN), 0);
+        lv_obj_set_style_border_color(b, lv_color_hex(sel ? C_PRIMEDGE : C_BTNEDGE), 0);
+    }
+
+    // Footer follows the selection: browse -> commit.
+    if (s_presetSel >= 0 && s_presetSel < (int8_t)s_presetCount) {
+        const MenuPreset &p = s_presets[s_presetSel];
+        snprintf(buf, sizeof(buf), "DRY %s", p.name ? p.name : "");
+        lv_label_set_text(s_presetFootMoreLbl, buf);
+        lv_obj_set_style_bg_color(s_presetFootMore, lv_color_hex(C_PRIMARY), 0);
+        lv_obj_set_style_border_color(s_presetFootMore, lv_color_hex(C_PRIMEDGE), 0);
+        lv_obj_remove_event_cb(s_presetFootMore, onPresetMore);
+        lv_obj_add_event_cb(s_presetFootMore, onPresetStart, LV_EVENT_CLICKED, nullptr);
+        lv_label_set_text(s_presetFootGoLbl, "CANCEL");
+        lv_obj_remove_event_cb(s_presetFootGo, onOpenDry);
+        lv_obj_add_event_cb(s_presetFootGo, onOpenPresets, LV_EVENT_CLICKED, nullptr);
+    } else {
+        snprintf(buf, sizeof(buf), pages > 1 ? "MORE %u/%u" : "MORE", s_presetPage + 1, pages);
+        lv_label_set_text(s_presetFootMoreLbl, buf);
+        lv_obj_set_style_bg_color(s_presetFootMore, lv_color_hex(C_BTN), 0);
+        lv_obj_set_style_border_color(s_presetFootMore, lv_color_hex(C_BTNEDGE), 0);
+        lv_obj_remove_event_cb(s_presetFootMore, onPresetStart);
+        lv_obj_add_event_cb(s_presetFootMore, onPresetMore, LV_EVENT_CLICKED, nullptr);
+        lv_label_set_text(s_presetFootGoLbl, "CUSTOM");
+        lv_obj_remove_event_cb(s_presetFootGo, onOpenPresets);
+        lv_obj_add_event_cb(s_presetFootGo, onOpenDry, LV_EVENT_CLICKED, nullptr);
+    }
 }
 
 void buildDry(lv_obj_t *root) {
@@ -417,6 +555,18 @@ void refresh() {
     const DeviceView d = deviceView();
     char buf[64];
 
+    // Re-scan presets whenever the controller sends a new config. Names come
+    // from the metadata (fixed), values from the cache (live), so a preset
+    // edited on the jog wheel shows its new temperature here.
+    static uint16_t s_presetRev = 0xFFFF;
+    if (d.menuRevision != s_presetRev) {
+        s_presetRev   = d.menuRevision;
+        s_presetCount = collectPresets(s_presets, kMaxPresets, g_menu_cache.getLang());
+        if (s_presetPage * kPresetsPerPage >= s_presetCount) s_presetPage = 0;
+        s_presetSel = -1;
+        if (s_page == PAGE_PRESETS) refreshPresetGrid();
+    }
+
     if (s_unit >= d.unitsCount) s_unit = 0;
     const UnitView &u = d.units[s_unit];
 
@@ -446,8 +596,19 @@ void refresh() {
         lv_obj_set_style_bg_color(s_modeDot,
             lv_color_hex(m == 4 ? C_STOPEDGE : (active ? C_WARM : C_IDLE)), 0);
 
-        if (active) snprintf(buf, sizeof(buf), "target  %d C", (int)(u.targetTempC + 0.5f));
-        else        snprintf(buf, sizeof(buf), "target  --");
+        // Both setpoints in one line — "what I asked for" is a single idea, and
+        // it keeps the duration visible without spending another metric box.
+        if (active && u.durationS) {
+            const uint32_t h = u.durationS / 3600, m2 = (u.durationS % 3600) / 60;
+            if (h) snprintf(buf, sizeof(buf), "target  %d C - %luh %02lum",
+                            (int)(u.targetTempC + 0.5f), (unsigned long)h, (unsigned long)m2);
+            else   snprintf(buf, sizeof(buf), "target  %d C - %lum",
+                            (int)(u.targetTempC + 0.5f), (unsigned long)m2);
+        } else if (active) {
+            snprintf(buf, sizeof(buf), "target  %d C", (int)(u.targetTempC + 0.5f));
+        } else {
+            snprintf(buf, sizeof(buf), "target  --");
+        }
         lv_label_set_text(s_targetLbl, buf);
 
         snprintf(buf, sizeof(buf), "%.1f", u.airTempC);
@@ -483,6 +644,8 @@ void refresh() {
         lv_obj_set_style_border_color(s_btnDry,
             lv_color_hex(active ? C_BTNEDGE : C_PRIMEDGE), 0);
     }
+
+    if (s_page == PAGE_PRESETS) refreshPresetGrid();
 
     if (s_page == PAGE_DRY) {
         snprintf(buf, sizeof(buf), "%d C", s_dryTemp);
@@ -522,6 +685,7 @@ void begin() {
 
     buildHeader(root);
     buildHome(root);
+    buildPresets(root);
     buildDry(root);
     buildStore(root);
     buildInfo(root);
