@@ -899,6 +899,22 @@ void cmdStop(uint8_t unit) {
 }
 void cmdRequestConfig() { requestConfig(); }
 
+void cmdSetMenuValue(uint16_t id, uint8_t unit, float value) {
+    if (id >= MENU_META_COUNT || unit >= kMaxUnits) return;
+    // Clamp to the controller's own declared bounds, as /api/set does.
+    const MenuMeta &m = g_menu_meta[id];
+    if (m.type == META_VALUE || m.type == META_TOGGLE) {
+        if (value < m.min_val) value = m.min_val;
+        if (value > m.max_val) value = m.max_val;
+    }
+    sendMenuSet(id, unit, value);
+}
+
+void cmdInvokeMenu(uint16_t id) {
+    if (id >= MENU_META_COUNT) return;
+    sendMenuInvoke(id);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 void setup() {

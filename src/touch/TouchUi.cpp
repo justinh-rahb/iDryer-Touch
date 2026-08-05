@@ -26,6 +26,7 @@
 #include "TouchState.h"
 #include "TouchDisplay.h"
 #include "MenuPresets.h"
+#include "MenuFilter.h"
 
 namespace idryer_touch {
 namespace ui {
@@ -67,7 +68,8 @@ constexpr uint16_t MID_DRY_TIME  = 4;
 constexpr uint16_t MID_STORE_TEMP = 7;
 constexpr uint16_t MID_STORE_HUM  = 8;
 
-enum Page : uint8_t { PAGE_HOME, PAGE_PRESETS, PAGE_DRY, PAGE_STORE, PAGE_INFO, PAGE_NOLINK, PAGE_COUNT };
+enum Page : uint8_t { PAGE_HOME, PAGE_PRESETS, PAGE_DRY, PAGE_STORE,
+                      PAGE_MENU, PAGE_EDIT, PAGE_INFO, PAGE_NOLINK, PAGE_COUNT };
 
 lv_obj_t *s_pages[PAGE_COUNT] = {nullptr};
 Page      s_page = PAGE_HOME;
@@ -105,6 +107,30 @@ lv_obj_t  *s_presetSubLbl[kPresetsPerPage] = {nullptr};
 lv_obj_t  *s_presetFootMore, *s_presetFootMoreLbl;
 lv_obj_t  *s_presetFootGo,   *s_presetFootGoLbl;
 lv_obj_t  *s_presetFootAlt,  *s_presetFootAltLbl;
+
+// Controller menu browser. 2 cols x 3 rows so 20-character labels fit; paged,
+// never scrolled. With EXT/EXT/LNK there is no jog wheel, so this is the only
+// local route to the controller's settings.
+constexpr uint8_t kMenuCols = 2, kMenuRows = 3;
+constexpr uint8_t kMenuPerPage = kMenuCols * kMenuRows;
+constexpr uint8_t kMenuMaxChildren = 24;
+constexpr uint8_t kMenuMaxDepth = 6;
+
+uint16_t s_menuNode = 0;                      // current submenu
+uint16_t s_menuStack[kMenuMaxDepth];          // ancestry for BACK
+uint8_t  s_menuDepth = 0;
+uint16_t s_menuChildren[kMenuMaxChildren];
+uint8_t  s_menuChildCount = 0;
+uint8_t  s_menuPage = 0;
+int8_t   s_menuSel  = -1;                     // index into s_menuChildren, for actions
+lv_obj_t *s_menuTitle;
+lv_obj_t *s_menuBtn[kMenuPerPage], *s_menuLbl[kMenuPerPage], *s_menuSub[kMenuPerPage];
+lv_obj_t *s_menuFootBack, *s_menuFootBackLbl, *s_menuFootMore, *s_menuFootMoreLbl;
+
+// Generic value editor, reused for any menu item.
+uint16_t s_editId = 0;
+float    s_editVal = 0;
+lv_obj_t *s_editTitle, *s_editValLbl, *s_editRangeLbl;
 
 // ── Small styling helpers ────────────────────────────────────────────────────
 
@@ -208,6 +234,7 @@ void onCycleUnit(lv_event_t *) {
 void onOpenInfo(lv_event_t *)  { showPage(PAGE_INFO); }
 void onHome(lv_event_t *)      { showPage(PAGE_HOME); }
 void refreshPresetGrid();
+void onOpenMenu(lv_event_t *);   // defined with the browser, below
 
 void onOpenPresets(lv_event_t *) {
     s_presetSel = -1;
@@ -369,9 +396,17 @@ void buildHome(lv_obj_t *root) {
     lv_obj_set_style_text_align(s_lineR, LV_TEXT_ALIGN_RIGHT, 0);
 
     lv_obj_t *f = footer(p);
-    s_btnDry  = button(f, 7,   6, 98, BTN_H, "DRY",   C_BTN,  C_BTNEDGE,  onOpenPresets, nullptr);
-                button(f, 111, 6, 98, BTN_H, "STORE", C_BTN,  C_BTNEDGE,  onOpenStore, nullptr);
-    s_btnStop = button(f, 215, 6, 98, BTN_H, "STOP",  C_STOP, C_STOPEDGE, onStop,      nullptr);
+    // Four across: 72 px each. Narrower than the 98 px elsewhere but still a
+    // comfortable target, and MENU has to be here — in the EXT/EXT/LNK layout
+    // this panel is the only local route to the controller's settings.
+    s_btnDry  = button(f, 7,   6, 72, BTN_H, "DRY",   C_BTN,  C_BTNEDGE,  onOpenPresets, nullptr,
+                       &lv_font_montserrat_14);
+                button(f, 84,  6, 72, BTN_H, "STORE", C_BTN,  C_BTNEDGE,  onOpenStore, nullptr,
+                       &lv_font_montserrat_14);
+                button(f, 161, 6, 72, BTN_H, "MENU",  C_BTN,  C_BTNEDGE,  onOpenMenu,  nullptr,
+                       &lv_font_montserrat_14);
+    s_btnStop = button(f, 238, 6, 72, BTN_H, "STOP",  C_STOP, C_STOPEDGE, onStop,      nullptr,
+                       &lv_font_montserrat_14);
 }
 
 // One stepper row: [ - ] [ value ] [ + ]. 58 px targets, 46 px tall.
@@ -486,6 +521,243 @@ void refreshPresetGrid() {
         lv_obj_remove_event_cb(s_presetFootGo, onOpenPresets);
         lv_obj_add_event_cb(s_presetFootGo, onOpenDry, LV_EVENT_CLICKED, nullptr);
     }
+}
+
+void refreshMenuGrid();
+void openEditor(uint16_t id);
+
+void loadMenuNode(uint16_t node) {
+    s_menuNode = node;
+    s_menuPage = 0;
+    s_menuSel  = -1;
+    s_menuChildCount = collectVisibleChildren(node, s_menuChildren, kMenuMaxChildren);
+}
+
+void onOpenMenu(lv_event_t *) {   // fwd-declared above for buildHome
+    s_menuDepth = 0;
+    loadMenuNode(0);
+    showPage(PAGE_MENU);
+    refreshMenuGrid();
+}
+
+void onMenuBack(lv_event_t *) {
+    if (s_menuSel >= 0) { s_menuSel = -1; refreshMenuGrid(); return; }
+    if (s_menuDepth == 0) { showPage(PAGE_HOME); return; }
+    loadMenuNode(s_menuStack[--s_menuDepth]);
+    refreshMenuGrid();
+}
+
+void onMenuMore(lv_event_t *) {
+    const uint8_t pages = (s_menuChildCount + kMenuPerPage - 1) / kMenuPerPage;
+    if (pages > 1) s_menuPage = (uint8_t)((s_menuPage + 1) % pages);
+    s_menuSel = -1;
+    refreshMenuGrid();
+}
+
+void onMenuRun(lv_event_t *) {
+    if (s_menuSel < 0 || s_menuSel >= (int8_t)s_menuChildCount) return;
+    cmdInvokeMenu(s_menuChildren[s_menuSel]);
+    s_menuSel = -1;
+    refreshMenuGrid();
+}
+
+void onMenuTap(lv_event_t *e) {
+    const uint8_t slot = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+    const uint8_t idx  = s_menuPage * kMenuPerPage + slot;
+    if (idx >= s_menuChildCount) return;
+    const uint16_t id = s_menuChildren[idx];
+    const MenuMeta &m = g_menu_meta[id];
+
+    if (m.type == META_SUBMENU) {
+        if (s_menuDepth < kMenuMaxDepth) s_menuStack[s_menuDepth++] = s_menuNode;
+        loadMenuNode(id);
+        refreshMenuGrid();
+    } else if (m.type == META_ACTION) {
+        // Never fire on the first tap. Scale calibration and PID autotune live
+        // down here, and a stray press on resistive should not start either.
+        s_menuSel = (s_menuSel == (int8_t)idx) ? -1 : (int8_t)idx;
+        refreshMenuGrid();
+    } else if (m.type == META_TOGGLE) {
+        const uint8_t u = (m.scope == META_SCOPE_PER_UNIT) ? s_unit : 0;
+        cmdSetMenuValue(id, u, g_menu_cache.getFloat(id, u) != 0.0f ? 0.0f : 1.0f);
+    } else {
+        openEditor(id);
+    }
+}
+
+void buildMenu(lv_obj_t *root) {
+    lv_obj_t *p = newPage(root);
+    s_pages[PAGE_MENU] = p;
+
+    s_menuTitle = label(p, 7, 1, "", &lv_font_montserrat_12, C_MUTED);
+    lv_obj_set_width(s_menuTitle, W - 14);
+
+    constexpr int16_t bw = 150, bh = 44, gx = 6, gy = 4, x0 = 7, y0 = 16;
+    for (uint8_t r = 0; r < kMenuRows; r++)
+        for (uint8_t c = 0; c < kMenuCols; c++) {
+            const uint8_t slot = r * kMenuCols + c;
+            lv_obj_t *b = button(p, x0 + c * (bw + gx), y0 + r * (bh + gy), bw, bh, "",
+                                 C_BTN, C_BTNEDGE, onMenuTap, (void *)(uintptr_t)slot,
+                                 &lv_font_montserrat_12);
+            s_menuBtn[slot] = b;
+            s_menuLbl[slot] = lv_obj_get_child(b, 0);
+            lv_obj_align(s_menuLbl[slot], LV_ALIGN_TOP_MID, 0, 6);
+            s_menuSub[slot] = label(b, 0, 25, "", &lv_font_montserrat_12, C_MUTED);
+            lv_obj_set_width(s_menuSub[slot], bw);
+            lv_obj_set_style_text_align(s_menuSub[slot], LV_TEXT_ALIGN_CENTER, 0);
+        }
+
+    lv_obj_t *f = footer(p);
+    s_menuFootBack = button(f, 7, 6, 150, BTN_H, "BACK", C_BTN, C_BTNEDGE, onMenuBack,
+                            nullptr, &lv_font_montserrat_14);
+    s_menuFootBackLbl = lv_obj_get_child(s_menuFootBack, 0);
+    s_menuFootMore = button(f, 163, 6, 150, BTN_H, "MORE", C_BTN, C_BTNEDGE, onMenuMore,
+                            nullptr, &lv_font_montserrat_14);
+    s_menuFootMoreLbl = lv_obj_get_child(s_menuFootMore, 0);
+}
+
+void refreshMenuGrid() {
+    char buf[48];
+    const uint8_t lang  = g_menu_cache.getLang() < MENU_LANG_COUNT ? g_menu_cache.getLang() : 0;
+    const uint8_t pages = s_menuChildCount ? (s_menuChildCount + kMenuPerPage - 1) / kMenuPerPage : 1;
+
+    const char *nodeName = (s_menuNode < MENU_META_COUNT && g_menu_meta[s_menuNode].title[lang])
+                         ? g_menu_meta[s_menuNode].title[lang] : "MENU";
+    if (pages > 1) snprintf(buf, sizeof(buf), "%s   %u/%u", nodeName, s_menuPage + 1, pages);
+    else           snprintf(buf, sizeof(buf), "%s", nodeName);
+    lv_label_set_text(s_menuTitle, buf);
+
+    for (uint8_t slot = 0; slot < kMenuPerPage; slot++) {
+        const uint8_t idx = s_menuPage * kMenuPerPage + slot;
+        lv_obj_t *b = s_menuBtn[slot];
+        if (idx >= s_menuChildCount) { lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN); continue; }
+        lv_obj_clear_flag(b, LV_OBJ_FLAG_HIDDEN);
+
+        const uint16_t id = s_menuChildren[idx];
+        const MenuMeta &m = g_menu_meta[id];
+        lv_label_set_text(s_menuLbl[slot], m.title[lang] ? m.title[lang] : "?");
+
+        const uint8_t u = (m.scope == META_SCOPE_PER_UNIT) ? s_unit : 0;
+        switch (m.type) {
+        case META_SUBMENU: snprintf(buf, sizeof(buf), "%u items", m.child_count); break;
+        case META_ACTION:  snprintf(buf, sizeof(buf), "run"); break;
+        case META_TOGGLE:  snprintf(buf, sizeof(buf), g_menu_cache.getFloat(id, u) != 0.0f ? "ON" : "OFF"); break;
+        default: {
+            const char *unit = m.unit[lang] ? m.unit[lang] : "";
+            snprintf(buf, sizeof(buf), "%d %s", (int)(g_menu_cache.getFloat(id, u) + 0.5f), unit);
+            break;
+        }}
+        lv_label_set_text(s_menuSub[slot], buf);
+
+        const bool sel = (s_menuSel == (int8_t)idx);
+        lv_obj_set_style_bg_color(b, lv_color_hex(sel ? C_STOP : C_BTN), 0);
+        lv_obj_set_style_border_color(b, lv_color_hex(sel ? C_STOPEDGE : C_BTNEDGE), 0);
+    }
+
+    // Footer turns into the confirmation when an action is armed.
+    if (s_menuSel >= 0 && s_menuSel < (int8_t)s_menuChildCount) {
+        const MenuMeta &m = g_menu_meta[s_menuChildren[s_menuSel]];
+        snprintf(buf, sizeof(buf), "RUN %s", m.title[lang] ? m.title[lang] : "");
+        lv_label_set_text(s_menuFootMoreLbl, buf);
+        lv_obj_set_style_bg_color(s_menuFootMore, lv_color_hex(C_STOP), 0);
+        lv_obj_set_style_border_color(s_menuFootMore, lv_color_hex(C_STOPEDGE), 0);
+        lv_obj_remove_event_cb(s_menuFootMore, onMenuMore);
+        lv_obj_add_event_cb(s_menuFootMore, onMenuRun, LV_EVENT_CLICKED, nullptr);
+        lv_label_set_text(s_menuFootBackLbl, "CANCEL");
+    } else {
+        snprintf(buf, sizeof(buf), pages > 1 ? "MORE %u/%u" : "MORE", s_menuPage + 1, pages);
+        lv_label_set_text(s_menuFootMoreLbl, buf);
+        lv_obj_set_style_bg_color(s_menuFootMore, lv_color_hex(C_BTN), 0);
+        lv_obj_set_style_border_color(s_menuFootMore, lv_color_hex(C_BTNEDGE), 0);
+        lv_obj_remove_event_cb(s_menuFootMore, onMenuRun);
+        lv_obj_add_event_cb(s_menuFootMore, onMenuMore, LV_EVENT_CLICKED, nullptr);
+        lv_label_set_text(s_menuFootBackLbl, s_menuDepth ? "BACK" : "HOME");
+    }
+}
+
+void refreshEditor();
+
+void onEditStep(lv_event_t *e) {
+    const int mult = (int)(intptr_t)lv_event_get_user_data(e);
+    if (s_editId >= MENU_META_COUNT) return;
+    const MenuMeta &m = g_menu_meta[s_editId];
+    const float step = (m.step > 0.0f) ? m.step : 1.0f;
+    s_editVal += step * mult;
+    if (s_editVal < m.min_val) s_editVal = m.min_val;
+    if (s_editVal > m.max_val) s_editVal = m.max_val;
+    refreshEditor();
+}
+
+void onEditSave(lv_event_t *) {
+    if (s_editId < MENU_META_COUNT) {
+        const MenuMeta &m = g_menu_meta[s_editId];
+        const uint8_t u = (m.scope == META_SCOPE_PER_UNIT) ? s_unit : 0;
+        cmdSetMenuValue(s_editId, u, s_editVal);
+    }
+    showPage(PAGE_MENU);
+    refreshMenuGrid();
+}
+
+void onEditCancel(lv_event_t *) { showPage(PAGE_MENU); refreshMenuGrid(); }
+
+void openEditor(uint16_t id) {
+    if (id >= MENU_META_COUNT) return;
+    const MenuMeta &m = g_menu_meta[id];
+    const uint8_t u = (m.scope == META_SCOPE_PER_UNIT) ? s_unit : 0;
+    s_editId  = id;
+    s_editVal = g_menu_cache.getFloat(id, u);
+    showPage(PAGE_EDIT);
+    refreshEditor();
+}
+
+// One editor for every value item: bounds, step and units all come from the
+// metadata, so there is nothing per-item to maintain.
+void buildEdit(lv_obj_t *root) {
+    lv_obj_t *p = newPage(root);
+    s_pages[PAGE_EDIT] = p;
+
+    s_editTitle = label(p, 7, 6, "", &lv_font_montserrat_14, C_TEXT);
+    lv_obj_set_width(s_editTitle, W - 14);
+    s_editRangeLbl = label(p, 7, 26, "", &lv_font_montserrat_12, C_MUTED);
+    lv_obj_set_width(s_editRangeLbl, W - 14);
+
+    button(p, 6, 48, 58, 60, "-", C_BTN, C_BTNEDGE, onEditStep, (void *)(intptr_t)-1,
+           &lv_font_montserrat_28);
+    lv_obj_t *box = panel(p, 70, 48, 180, 60, C_PANEL2, C_EDGE, 7);
+    button(p, 256, 48, 58, 60, "+", C_BTN, C_BTNEDGE, onEditStep, (void *)(intptr_t)1,
+           &lv_font_montserrat_28);
+    s_editValLbl = lv_label_create(box);
+    lv_label_set_text(s_editValLbl, "--");
+    lv_obj_set_style_text_font(s_editValLbl, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(s_editValLbl, lv_color_hex(C_TEXT), 0);
+    lv_obj_center(s_editValLbl);
+
+    lv_obj_t *f = footer(p);
+    button(f, 7,   6, 202, BTN_H, "SAVE",   C_PRIMARY, C_PRIMEDGE, onEditSave,   nullptr);
+    button(f, 215, 6, 98,  BTN_H, "CANCEL", C_BTN,     C_BTNEDGE,  onEditCancel, nullptr);
+}
+
+void refreshEditor() {
+    if (s_editId >= MENU_META_COUNT) return;
+    const MenuMeta &m = g_menu_meta[s_editId];
+    const uint8_t lang = g_menu_cache.getLang() < MENU_LANG_COUNT ? g_menu_cache.getLang() : 0;
+    char buf[56];
+
+    snprintf(buf, sizeof(buf), "%s", m.title[lang] ? m.title[lang] : "");
+    lv_label_set_text(s_editTitle, buf);
+
+    const char *unit = m.unit[lang] ? m.unit[lang] : "";
+    if (m.scope == META_SCOPE_PER_UNIT)
+        snprintf(buf, sizeof(buf), "unit %u   %d..%d %s", s_unit + 1,
+                 (int)m.min_val, (int)m.max_val, unit);
+    else
+        snprintf(buf, sizeof(buf), "%d..%d %s  (global)", (int)m.min_val, (int)m.max_val, unit);
+    lv_label_set_text(s_editRangeLbl, buf);
+
+    // Integer display unless the step is fractional — PID gains need decimals.
+    if (m.step > 0.0f && m.step < 1.0f) snprintf(buf, sizeof(buf), "%.2f %s", s_editVal, unit);
+    else                                snprintf(buf, sizeof(buf), "%d %s", (int)(s_editVal + 0.5f), unit);
+    lv_label_set_text(s_editValLbl, buf);
 }
 
 void buildDry(lv_obj_t *root) {
@@ -696,6 +968,8 @@ void begin() {
     buildHeader(root);
     buildHome(root);
     buildPresets(root);
+    buildMenu(root);
+    buildEdit(root);
     buildDry(root);
     buildStore(root);
     buildInfo(root);

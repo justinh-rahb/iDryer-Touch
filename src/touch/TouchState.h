@@ -41,4 +41,9 @@ void cmdStartStorage(uint8_t unit, int tempC, uint32_t humidityPct);
 void cmdStop(uint8_t unit);
 void cmdRequestConfig();
 
+// Generic menu writes, the same path the jog wheel uses. Needed because the
+// EXT/EXT/LNK layout has no jog wheel — this panel is the only local control.
+void cmdSetMenuValue(uint16_t id, uint8_t unit, float value);
+void cmdInvokeMenu(uint16_t id);
+
 } // namespace idryer_touch

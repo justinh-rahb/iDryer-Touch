@@ -88,12 +88,13 @@ that already exists in `idryer-core`.
 
 ## UI
 
-- [ ] **Decide the port layout, then revisit the touch menu.** The touch UI omits
-      the 202-item tree on the reasoning that the jog wheel covers it — but the
-      jog wheel is a `SCR` device on PORT 3, so the 3-unit layout
-      (`EXT/EXT/LNK`) removes it. In that configuration this panel is the only
-      local control and the omission needs rethinking: at minimum the settings
-      people actually reach for, if not the whole tree.
+- [x] ~~Revisit the touch menu for the EXT/EXT/LNK layout.~~ Browser added, with
+      subtrees the UI already covers filtered out (5 root entries instead of
+      202) and a generic editor driven by the metadata.
+- [ ] `PORT CONFIG` is hidden from the touch browser because a bad combination
+      needs an erase-and-reflash to recover. It is still reachable from the web
+      UI's MENU tab, which has no such filter — decide whether that is the right
+      split or whether the web should warn too.
 - [ ] Touch header uses a text wordmark; the web UI uses the real logo. Matching
       it needs a PNG decoder or a converted RGB565 array.
 - [ ] Backlight button cycles 100/50/20% with no indication of the current level.
