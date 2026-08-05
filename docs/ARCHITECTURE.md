@@ -189,18 +189,33 @@ as a sense input only). Power the board from the RJ45's 5V into `P1` VIN.
 Pins are set by `-DIDRYER_UART_TX_PIN` / `-DIDRYER_UART_RX_PIN`; `main_v2.cpp`
 still defaults to the C3's GPIO6/7.
 
-### One EXT port is the price of the screen
+### Port roles, and why this device is free
 
-The controller's RJ45 EXT ports are dual-purpose. Pin 4 is both `T0` and
-`RXD 0 (GPIO01)`; pin 6 is both `H0` and `TXD 0 (GPIO00)` — the same nets are
-either a unit's thermistor and heater, or a UART for a Link. Plugging this
-display into a port therefore costs a drying unit: three ports means screen plus
-two units.
+The controller's ports carry a configurable role, not a fixed function
+(`src/hardware/port_config.h`): `EXT` a dryer module, `SCR` an OLED I2C screen,
+`SCL` HX711 scales, and `LNK` — *WiFi/Touch over UART*, which is what this
+firmware is. We are a Link that happens to have a panel, not an `SCR`.
 
-Worth knowing when reading the unit-count handling. The firmware clamps to
-`MENU_MAX_UNITS` (3), which is a menu-mirror limit and sits above the practical
-one, so the clamp is a backstop rather than the constraint you will actually
-meet.
+`isPortModeValid()` allows `EXT`/`SCL` on PORT 1, `EXT`/`SCL`/`LNK` on PORT 2,
+and only `SCR`/`LNK` on PORT 3, with those three roles singleton.
+
+The unit count comes purely from the `EXT` chain:
+
+```c
+uint8_t calcMaxUnits() {
+  uint8_t max = 1;                    // Port0 always MAIN
+  if (g_hw_port1 == PORT_EXT) { max = 2;
+    if (g_hw_port2 == PORT_EXT) max = 3; }
+}
+```
+
+PORT 3 never appears in it, so putting this device there as `LNK` costs nothing:
+`PORT1=EXT, PORT2=EXT, PORT3=LNK` keeps the full three units. `MENU_MAX_UNITS`
+is 3 for the same reason, which makes the clamp an exact match rather than a
+backstop.
+
+The configuration is snapshotted at boot, so a `PORT CONFIG` change needs a
+reboot before the controller will speak to anything on that port.
 
 ### Memory — measured, not estimated
 

@@ -71,15 +71,42 @@ switch or router. From the controller schematic
 | 4 | controller RXD | CYD GPIO22 (our TX) |
 | 6 | controller TXD | CYD GPIO27 (our RX) |
 
-Each EXT port is *either* a unit or a comms port, not both. On the schematic
-pin 4 carries `T0` and `RXD 0`, pin 6 carries `H0` and `TXD 0` — the same nets
-serve the unit's thermistor and heater or the UART, depending on what is plugged
-in. So attaching this display consumes one of the controller's three EXT ports,
-leaving two for drying units.
+### Which port, and configuring it
 
-That is the practical ceiling, and it sits just under the firmware one: the menu
-mirror is `MENU_MAX_UNITS` = 3, so a controller reporting 4 units gets clamped to
-3 with a warning.
+**The port must be set to `LNK` before any of this works.** The controller
+snapshots its port configuration at boot, so set it and reboot:
+
+```
+MENU -> GLOBAL -> PORT CONFIG -> PORT 3 = LNK
+```
+
+Port roles are `EXT` (dryer module), `SCR` (OLED I2C screen), `SCL` (HX711
+scales) and `LNK` (*WiFi/Touch over UART* — that is this project). They are not
+interchangeable, and `src/hardware/port_config.h` restricts which port takes
+which:
+
+| Menu name | Connector | Allowed roles |
+| --- | --- | --- |
+| PORT 1 | U2 | `EXT`, `SCL` |
+| PORT 2 | U3 | `EXT`, `SCL`, `LNK` |
+| PORT 3 | U4 | `SCR`, `LNK` |
+
+`SCR`, `SCL` and `LNK` are singletons, and `PORT 2 = EXT` requires
+`PORT 1 = EXT`.
+
+**This display costs you nothing in drying units.** Unit count comes only from
+the `EXT` chain — base 1 for the built-in module, +1 for `PORT 1 = EXT`, +1 for
+`PORT 2 = EXT` — and PORT 3 is never part of it. So the best layout puts us on
+PORT 3 and keeps all three units:
+
+| PORT 1 | PORT 2 | PORT 3 | Units | Notes |
+| --- | --- | --- | ---: | --- |
+| `EXT` | `EXT` | `LNK` | **3** | maximum units, no scales |
+| `EXT` | `SCL` | `LNK` | 2 | scales on U3 |
+| `SCL` | `LNK` | `SCR` | 1 | our device on U3, OLED on U4 |
+
+`MENU_MAX_UNITS` is 3 to match, so a controller reporting more gets clamped with
+a warning.
 
 > **Verify with a meter before powering anything.** Upstream ships two diagrams
 > that do not agree: the schematic puts UART on pins 4/6 and ground on 7, while
