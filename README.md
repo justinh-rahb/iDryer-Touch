@@ -29,14 +29,26 @@ applied to the dryer.
 - **Touch GUI** on the ESP32 CYD — five LVGL screens sized for a resistive
   panel: status, start drying, start storage, device info, and a no-link state.
 
-The stock 1.3" OLED and jog wheel keep working. The web UI and the touch GUI are
-*additional* clients of the controller's menu, not replacements — no
-iDryerControllerV2 firmware changes are required.
+No iDryerControllerV2 firmware changes are required — this is an ordinary `LNK`
+client of the controller's existing UART protocol.
+
+**Whether the stock OLED and jog wheel survive depends on which port you use.**
+They are not on the controller board; they are a `SCR` device on PORT 3, and the
+firmware only creates the encoder and display when `hasScreen()` is true:
+
+| Layout | Units | Stock OLED + jog wheel | Local control |
+| --- | ---: | --- | --- |
+| `EXT` / `EXT` / `LNK` | **3** | **gone** | this panel only |
+| `EXT` / `LNK` / `SCR` | 2 | kept | both |
+
+So it is a real trade: the third drying unit, or the jog wheel. Worth deciding
+before wiring, because it also changes how much this panel needs to do — with
+PORT 3 = `LNK` there is no jog wheel to fall back on, and the 202-item menu tree
+is reachable only from the web UI.
 
 The touch panel deliberately does less than the web UI: one unit at a time, big
-steppers instead of sliders or a keypad, and no 202-item menu tree. On a 320×240
-resistive screen those are the things that do not work, and the jog wheel already
-covers them.
+steppers instead of sliders or a keypad, and no full menu tree — on a 320×240
+resistive screen those are the things that do not work.
 
 ## Hardware
 

@@ -42,8 +42,14 @@ without hardcoding device types.
 **Therefore the touch GUI does not replace the controller's display.** It is a
 *second, parallel* menu client that renders from the same `menu_meta` +
 `menu_cache` data and writes back with the same `set`/`invoke` commands. The
-stock OLED and jog wheel keep working; the touch screen is additive. **No
-iDryerControllerV2 firmware changes are required.** The same model feeds the web
+**No iDryerControllerV2 firmware changes are required.**
+
+Whether the touch screen is *additive* or a *replacement* depends on the port,
+though. The stock OLED and jog wheel are not on the controller board — they are
+a `SCR` device on PORT 3, and `main.cpp` only constructs the encoder, button and
+display inside `if (hasScreen())`. Taking PORT 3 for `LNK` to keep three drying
+units therefore removes both, leaving this panel as the only local control and
+the web UI as the only route to the full menu. The same model feeds the web
 UI, so the touch GUI and the web UI are two renderers over one state tree.
 
 > Caveat: the dryer has *not* migrated to `menu_protocol_v1` yet. Core's doc puts
