@@ -70,7 +70,8 @@ constexpr uint16_t MID_STORE_TEMP = 7;
 constexpr uint16_t MID_STORE_HUM  = 8;
 
 enum Page : uint8_t { PAGE_SPLASH, PAGE_HOME, PAGE_PRESETS, PAGE_DRY, PAGE_STORE,
-                      PAGE_MENU, PAGE_EDIT, PAGE_INFO, PAGE_NOLINK, PAGE_COUNT };
+                      PAGE_MENU, PAGE_EDIT, PAGE_INFO, PAGE_NOLINK, PAGE_FAULTS,
+                      PAGE_COUNT };
 
 lv_obj_t *s_pages[PAGE_COUNT] = {nullptr};
 Page      s_page = PAGE_HOME;
@@ -78,6 +79,14 @@ uint8_t   s_unit = 0;
 
 // Header
 lv_obj_t *s_unitChip, *s_unitChipLbl, *s_hdrRight, *s_dot;
+
+// Fault badge in the header, plus the page it opens. Four rows because that is
+// what fits the 156 px body at a legible size, and the controller's ring holds
+// six — the count in the title says when some are off-screen.
+constexpr uint8_t kFaultRows = 4;
+lv_obj_t *s_errChip, *s_errChipLbl;
+lv_obj_t *s_faultTitle, *s_faultRow[kFaultRows], *s_faultLbl[kFaultRows],
+         *s_faultDot[kFaultRows], *s_faultNone;
 
 // Home
 lv_obj_t *s_modeDot, *s_modeLbl, *s_targetLbl;
@@ -244,6 +253,12 @@ void onCycleUnit(lv_event_t *) {
 }
 void onOpenInfo(lv_event_t *)  { showPage(PAGE_INFO); }
 void onHome(lv_event_t *)      { showPage(PAGE_HOME); }
+void onOpenFaults(lv_event_t *) { showPage(PAGE_FAULTS); }
+void onClearFaults(lv_event_t *) {
+    cmdClearErrors();
+    // Stay on the page: the list empties in the next refresh, which is the
+    // confirmation. Bouncing to Home would leave the user guessing.
+}
 void refreshPresetGrid();
 void onOpenMenu(lv_event_t *);   // defined with the browser, below
 
@@ -364,6 +379,22 @@ void buildHeader(lv_obj_t *root) {
     // so the dot sits further left than the visual centre would suggest.
     s_dot = panel(right, 44, 11, 6, 6, C_IDLE, 0, 3);
     s_hdrRight = label(right, 54, 8, "", &lv_font_montserrat_12, C_MUTED);
+
+    // Fault badge sits in the 152-204 gap between the unit chip and the status
+    // dot. Created after `right` so it takes the taps in that strip rather than
+    // opening Info. Hidden unless the controller has actually reported a fault.
+    s_errChip = lv_btn_create(h);
+    lv_obj_remove_style_all(s_errChip);
+    lv_obj_set_pos(s_errChip, 155, 3);
+    lv_obj_set_size(s_errChip, 46, 22);
+    paint(s_errChip, C_STOP, C_STOPEDGE, 6);
+    lv_obj_add_event_cb(s_errChip, onOpenFaults, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_flag(s_errChip, LV_OBJ_FLAG_HIDDEN);
+    s_errChipLbl = lv_label_create(s_errChip);
+    lv_label_set_text(s_errChipLbl, "ERR");
+    lv_obj_set_style_text_font(s_errChipLbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(s_errChipLbl, lv_color_hex(C_TEXT), 0);
+    lv_obj_center(s_errChipLbl);
 }
 
 lv_obj_t *newPage(lv_obj_t *root) {
@@ -921,6 +952,65 @@ void buildNoLink(lv_obj_t *root) {
     button(f, 163, 6, 150, BTN_H, "INFO",       C_BTN, C_BTNEDGE, onOpenInfo,  nullptr);
 }
 
+void buildFaults(lv_obj_t *root) {
+    lv_obj_t *p = newPage(root);
+    s_pages[PAGE_FAULTS] = p;
+
+    s_faultTitle = label(p, 6, 4, "FAULTS", &lv_font_montserrat_14, C_TEXT);
+
+    // Shown instead of the rows when the log is empty, so a cleared panel says
+    // so outright rather than just going blank.
+    s_faultNone = label(p, 0, 58, "No faults reported", &lv_font_montserrat_14, C_MUTED);
+    lv_obj_set_width(s_faultNone, W);
+    lv_obj_set_style_text_align(s_faultNone, LV_TEXT_ALIGN_CENTER, 0);
+
+    // One line per fault: severity dot, then "SOURCE  message  U1". Two lines
+    // would read better but 156 px of body over four rows does not allow it.
+    for (uint8_t i = 0; i < kFaultRows; i++) {
+        const int16_t y = 24 + i * 32;
+        s_faultRow[i] = panel(p, 6, y, 308, 28, C_PANEL2, C_EDGE, 5);
+        s_faultDot[i] = panel(s_faultRow[i], 8, 11, 6, 6, C_STOPEDGE, 0, 3);
+        s_faultLbl[i] = label(s_faultRow[i], 22, 7, "", &lv_font_montserrat_12, C_TEXT);
+        lv_label_set_long_mode(s_faultLbl[i], LV_LABEL_LONG_DOT);
+        lv_obj_set_width(s_faultLbl[i], 274);
+        lv_obj_add_flag(s_faultRow[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    lv_obj_t *f = footer(p);
+    button(f, 7,   6, 202, BTN_H, "CLEAR FAULTS", C_PRIMARY, C_PRIMEDGE, onClearFaults, nullptr);
+    button(f, 215, 6, 98,  BTN_H, "BACK",         C_BTN,     C_BTNEDGE,  onHome,        nullptr);
+}
+
+void refreshFaults() {
+    char buf[96];
+    ErrorEntry e;
+    uint8_t shown = 0;
+
+    for (uint8_t i = 0; i < kFaultRows; i++) {
+        if (errorAt(i, e)) {
+            // Severity drives the dot: CRIT reads as red, anything softer amber.
+            const bool crit = (strncmp(e.severity, "CRIT", 4) == 0);
+            lv_obj_set_style_bg_color(s_faultDot[i],
+                lv_color_hex(crit ? C_STOPEDGE : C_WARM), 0);
+            snprintf(buf, sizeof(buf), "%s  %s  U%u", e.source, e.message, e.unitId + 1);
+            lv_label_set_text(s_faultLbl[i], buf);
+            lv_obj_clear_flag(s_faultRow[i], LV_OBJ_FLAG_HIDDEN);
+            shown++;
+        } else {
+            lv_obj_add_flag(s_faultRow[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    const uint8_t total = deviceView().errorCount;
+    if (total > shown) snprintf(buf, sizeof(buf), "FAULTS (%u, showing %u)", total, shown);
+    else if (total)    snprintf(buf, sizeof(buf), "FAULTS (%u)", total);
+    else               snprintf(buf, sizeof(buf), "FAULTS");
+    lv_label_set_text(s_faultTitle, buf);
+
+    if (total) lv_obj_add_flag(s_faultNone, LV_OBJ_FLAG_HIDDEN);
+    else       lv_obj_clear_flag(s_faultNone, LV_OBJ_FLAG_HIDDEN);
+}
+
 // ── Refresh ──────────────────────────────────────────────────────────────────
 
 void refresh() {
@@ -953,6 +1043,18 @@ void refresh() {
     lv_obj_set_style_bg_color(s_dot, lv_color_hex(d.mcuConnected ? C_OK : C_IDLE), 0);
     snprintf(buf, sizeof(buf), "%s%s", d.ip, d.apMode ? " AP" : "");
     lv_label_set_text(s_hdrRight, buf);
+
+    // Fault badge: the only route to the faults page, so it has to appear the
+    // moment the controller reports one.
+    if (d.errorCount) {
+        snprintf(buf, sizeof(buf), "ERR %u", d.errorCount);
+        lv_label_set_text(s_errChipLbl, buf);
+        lv_obj_clear_flag(s_errChip, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_errChip, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (s_page == PAGE_FAULTS) { refreshFaults(); return; }
 
     if (s_page == PAGE_SPLASH) { refreshSplash(d); return; }
 
@@ -1067,6 +1169,7 @@ void begin() {
     buildStore(root);
     buildInfo(root);
     buildNoLink(root);
+    buildFaults(root);
 
     // Seed the steppers from whatever the controller currently has, when known.
     if (g_menu_cache.revision > 0) {

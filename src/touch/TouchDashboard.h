@@ -76,6 +76,19 @@ static const char kTouchDashboardHtml[] PROGMEM = R"HTML(
 .btn:hover,.btn.active{background:var(--active);border-color:var(--accent)}
 .btn.primary{background:#1d5d99;border-color:#69b4ff}.btn.stop{background:#4b202a;border-color:#844150}
 .btn.sm{min-height:34px;font-size:12px;padding:4px 10px}
+/* Faults sit outside the tab pages so a latched error is visible from any tab —
+   the controller keeps re-posting until cleared, and it vents the servo while
+   it does, so this is not something to hide one click deep. */
+.faults{border:1px solid var(--danger);background:#1a0f14;border-radius:10px;padding:10px 12px;margin:0 0 14px}
+.faults .fhead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
+.faults ul{list-style:none;margin:0;padding:0;font-size:13px}
+.faults li{display:flex;gap:8px;align-items:baseline;padding:3px 0;border-top:1px solid #2a1a20}
+.faults li:first-child{border-top:0}
+.faults .sev{flex:none;font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--warm)}
+.faults .sev.crit{color:#ff7d8f}
+.faults .src{flex:none;color:var(--text);font-weight:600}
+.faults .msg{color:var(--muted)}
+.faults .age{margin-left:auto;flex:none;color:var(--muted);font-size:11px;white-space:nowrap}
 .page{display:none;max-width:720px}.page.active{display:block}
 /* Home is a bare container for the unit cards — without this it renders as a
    narrow card wrapping more cards, which double-borders and cramps the grid. */
@@ -139,6 +152,11 @@ input,select{width:100%;min-height:43px;background:#0c131d;border:1px solid #385
 </nav>
 <main class="main">
 <div class="topline"><h1>iDryer Touch</h1><p id="network">Loading device state…</p></div>
+
+<div class="faults" id="faults" hidden>
+<div class="fhead"><strong id="faultsTitle">Faults</strong><button class="btn sm" id="clearFaults">Clear faults</button></div>
+<ul id="faultsList"></ul>
+</div>
 
 <section class="page active" data-content="home">
 <div class="units" id="units"></div>
@@ -239,7 +257,42 @@ function applyStatus(s){
   $("mcu").textContent=s.mcuConnected?("controller "+(s.mcuSerial||"connected")+" · menu rev "+s.menuRevision):"controller not detected";
   $("units").innerHTML=(s.units||[]).map(unitCard).join("");
   ["dryUnit","storeUnit","presetUnit"].forEach(renderUnits);
+  syncFaults(s.errorCount|0);
 }
+
+// Only refetch when the count moves. applyStatus runs on every websocket push,
+// and the fault text does not change between them — polling /api/errors at that
+// rate would be a request every 500 ms for a list that is almost always empty.
+let faultCount=-1;
+async function syncFaults(n){
+  if(n===faultCount) return;
+  faultCount=n;
+  const box=$("faults");
+  if(!n){box.hidden=true;$("faultsList").innerHTML="";return}
+  try{
+    const d=await (await fetch("/api/errors")).json();
+    const rows=(d.errors||[]).map(e=>{
+      const crit=(e.sev||"").indexOf("CRIT")===0;
+      const age=e.ageS<60?e.ageS+"s":Math.floor(e.ageS/60)+"m";
+      // Fields are escaped server-side by htmlEscape(), same as the menu tree.
+      return `<li><span class="sev${crit?" crit":""}">${e.sev}</span>`+
+             `<span class="src">${e.src}</span>`+
+             `<span class="msg">${e.msg} · unit ${e.unit}</span>`+
+             `<span class="age">${age}</span></li>`;
+    }).join("");
+    $("faultsTitle").textContent=n===1?"1 fault reported":n+" faults reported";
+    $("faultsList").innerHTML=rows;
+    box.hidden=false;
+  }catch(_){/* leave the previous list up rather than blanking on a blip */}
+}
+
+$("clearFaults").onclick=async()=>{
+  try{
+    await post("/api/command?do=clear_errors");
+    faultCount=-1;               // force the next status push to re-read
+    $("faults").hidden=true;
+  }catch(e){$("faultsTitle").textContent="Could not clear: "+e.message}
+};
 
 $("startDry").onclick=async()=>{try{await post(`/api/command?do=drying&unit=${unitOf("dryUnit")}&temperature=${$("dryTemp").value}&duration=${$("dryTime").value}`);$("dryFeedback").textContent="Drying started."}catch(e){$("dryFeedback").textContent=e.message}};
 $("stopDry").onclick=async()=>{try{await post("/api/command?do=stop&unit="+unitOf("dryUnit"));$("dryFeedback").textContent="Stopped."}catch(e){$("dryFeedback").textContent=e.message}};

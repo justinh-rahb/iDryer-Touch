@@ -208,11 +208,56 @@ void onConfigChunk(const UartConfigChunkPayload &p, uint8_t dataLen,
     s_configRx.reset();
 }
 
+// Recent controller errors, newest at s_errorHead - 1. A ring rather than a
+// growing list: the controller re-posts a latched error every time its own log
+// is walked, so an unbounded list would fill with duplicates of one fault.
+ErrorEntry s_errors[kMaxErrors];
+uint8_t    s_errorCount = 0;
+uint8_t    s_errorHead  = 0;
+
+void copyField(char *dst, size_t dstSize, const char *src, size_t srcMax) {
+    size_t n = strnlen(src, srcMax);
+    if (n >= dstSize) n = dstSize - 1;
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
 void onLog(const uint8_t *payload, uint8_t length) {
     if (length < sizeof(UartLogPayload)) return;
     const auto *log = reinterpret_cast<const UartLogPayload *>(payload);
     HAL_LOG_INFO("UART", "Log[%s] %s/%s: %s (U%u)",
                  log->severity, log->source, log->event, log->message, log->unitId + 1);
+
+    // Only things a user can act on. INFO/DEBUG would push real faults out of a
+    // six-deep ring within seconds.
+    if (strncmp(log->severity, "CRIT",  4) != 0 &&
+        strncmp(log->severity, "ERROR", 5) != 0 &&
+        strncmp(log->severity, "WARN",  4) != 0) {
+        return;
+    }
+
+    // Collapse repeats. The controller keeps re-sending a latched error, and
+    // six copies of one open thermistor tells the user less than one does.
+    for (uint8_t i = 0; i < s_errorCount; i++) {
+        ErrorEntry &e = s_errors[i];
+        if (e.unitId == log->unitId &&
+            strncmp(e.source, log->source, sizeof(e.source) - 1) == 0 &&
+            strncmp(e.event,  log->event,  sizeof(e.event)  - 1) == 0) {
+            e.atMs = millis();
+            return;
+        }
+    }
+
+    ErrorEntry &e = s_errors[s_errorHead];
+    copyField(e.severity, sizeof(e.severity), log->severity, sizeof(log->severity));
+    copyField(e.source,   sizeof(e.source),   log->source,   sizeof(log->source));
+    copyField(e.event,    sizeof(e.event),    log->event,    sizeof(log->event));
+    copyField(e.message,  sizeof(e.message),  log->message,  sizeof(log->message));
+    e.unitId = log->unitId;
+    e.atMs   = millis();
+
+    s_errorHead = (uint8_t)((s_errorHead + 1) % kMaxErrors);
+    if (s_errorCount < kMaxErrors) s_errorCount++;
 }
 
 // ── UART: ESP32 → controller ─────────────────────────────────────────────────
@@ -232,6 +277,13 @@ void sendStop(uint8_t unitId) {
     cmd.command = UartCmdCode::Stop;
     cmd.unitId  = unitId;
     s_uart.sendCommand(cmd);
+}
+
+void sendClearErrors() {
+    UartCmdPayload cmd{};
+    cmd.command = UartCmdCode::ClearErrors;
+    s_uart.sendCommand(cmd);
+    HAL_LOG_INFO("UART", "ClearErrors sent");
 }
 
 // Pushes a menu edit back to the controller. Same ConfigPush path the cloud
@@ -442,6 +494,7 @@ String statusJson() {
     doc["otaError"]             = s_otaError;
     doc["screenTimeoutS"]       = display::screenTimeout();
     doc["screenAsleep"]         = display::asleep();
+    doc["errorCount"]           = s_errorCount;
     doc["menuRevision"]         = g_menu_cache.revision;
     doc["unitsCount"]           = s_unitsCount;
 
@@ -554,6 +607,26 @@ void handleFirmwarePage() {
 
 void handleStatus() { sendActionStatus(); }
 
+// Recent controller faults, newest first. Small and bounded (kMaxErrors), so
+// unlike /api/menu this needs no paging.
+void handleErrors() {
+    String out;
+    out.reserve(768);
+    out += "{\"count\":" + String(s_errorCount) + ",\"errors\":[";
+    ErrorEntry e;
+    for (uint8_t i = 0; errorAt(i, e); i++) {
+        if (i) out += ',';
+        out += "{\"sev\":\""  + htmlEscape(e.severity) + "\"";
+        out += ",\"src\":\""  + htmlEscape(e.source)   + "\"";
+        out += ",\"evt\":\""  + htmlEscape(e.event)    + "\"";
+        out += ",\"msg\":\""  + htmlEscape(e.message)  + "\"";
+        out += ",\"unit\":"   + String(e.unitId + 1);
+        out += ",\"ageS\":"   + String((millis() - e.atMs) / 1000) + "}";
+    }
+    out += "]}";
+    s_server.send(200, "application/json", out);
+}
+
 // Serves the menu tree as the UIs need it: metadata from flash, values from the
 // cache. Paged because the full tree is ~26 KB serialized and must never be
 // assembled in one buffer (see the file header).
@@ -659,7 +732,9 @@ void handleCommandPost() {
     const String what = s_server.arg("do");
     const long   unit = s_server.hasArg("unit") ? s_server.arg("unit").toInt() : 0;
 
-    if (what != "get_config" && (unit < 0 || unit >= kMaxUnits)) {
+    // get_config and clear_errors are device-wide, so they carry no unit.
+    const bool global = (what == "get_config" || what == "clear_errors");
+    if (!global && (unit < 0 || unit >= kMaxUnits)) {
         s_server.send(400, "application/json", "{\"error\":\"unit out of range\"}");
         return;
     }
@@ -676,6 +751,8 @@ void handleCommandPost() {
                   (uint32_t)s_server.arg("humidity").toInt());
     } else if (what == "get_config") {
         requestConfig();
+    } else if (what == "clear_errors") {
+        cmdClearErrors();
     } else {
         s_server.send(400, "application/json", "{\"error\":\"unknown command\"}");
         return;
@@ -835,6 +912,7 @@ void configureRoutes() {
     s_server.on("/setup",          HTTP_GET,  handleSetupPage);
     s_server.on("/fw",             HTTP_GET,  handleFirmwarePage);
     s_server.on("/api/status",     HTTP_GET,  handleStatus);
+    s_server.on("/api/errors",     HTTP_GET,  handleErrors);
     s_server.on("/api/menu",       HTTP_GET,  handleMenu);
     s_server.on("/api/presets",    HTTP_GET,  handlePresets);
     s_server.on("/api/set",        HTTP_POST, handleSetPost);
@@ -873,6 +951,7 @@ DeviceView deviceView() {
     v.apMode       = s_apMode;
     v.unitsCount   = s_unitsCount;
     v.menuRevision = g_menu_cache.revision;
+    v.errorCount   = s_errorCount;
 
     const String ip   = localIpString();
     const String ssid = s_apMode ? s_apSsid : WiFi.SSID();
@@ -904,6 +983,22 @@ void cmdStop(uint8_t unit) {
     if (unit < kMaxUnits) sendStop(unit);
 }
 void cmdRequestConfig() { requestConfig(); }
+
+bool errorAt(uint8_t idx, ErrorEntry &out) {
+    if (idx >= s_errorCount) return false;
+    // Walk back from the head so index 0 is the newest.
+    uint8_t slot = (uint8_t)((s_errorHead + kMaxErrors - 1 - idx) % kMaxErrors);
+    out = s_errors[slot];
+    return true;
+}
+
+void cmdClearErrors() {
+    sendClearErrors();
+    // Drop the local mirror too. The controller stops re-posting once its log is
+    // cleared, so waiting for it to tell us would just leave stale rows on screen.
+    s_errorCount = 0;
+    s_errorHead  = 0;
+}
 
 void cmdSetMenuValue(uint16_t id, uint8_t unit, float value) {
     if (id >= MENU_META_COUNT || unit >= kMaxUnits) return;
