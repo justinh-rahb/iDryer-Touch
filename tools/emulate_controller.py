@@ -36,6 +36,9 @@ python3 emulate_controller.py --port /dev/ttyUSB0 --units 2 --fw-major 2
 """
 
 import argparse
+import json
+import re
+import pathlib
 import struct
 import sys
 import time
@@ -46,7 +49,7 @@ import serial
 # Константы протокола
 # ---------------------------------------------------------------------------
 SOF = 0xAA
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2   # iDryerControllerV2 v2.0.0 / idryer-core d3df6af
 
 # FLAGS
 FLAG_ACK_REQUIRED = 0x01
@@ -54,6 +57,9 @@ FLAG_IS_ACK       = 0x02
 FLAG_ERROR        = 0x04
 FLAG_FRAGMENTED   = 0x08
 FLAG_LAST_FRAGMENT = 0x10
+
+UART_MAX_PAYLOAD         = 200   # contracts/_generated/uart_protocol.h
+CONFIG_CHUNK_HEADER_SIZE = 6     # transferId(2) totalSize(2) chunkIndex(1) pad(1)
 
 # MessageKind
 KIND_HELLO          = 0x01
@@ -90,6 +96,16 @@ MODE_DRYING  = 1
 MODE_STORAGE = 2
 MODE_PROFILE = 3
 MODE_FAULT   = 4
+MODE_HEATING = 5   # v2
+MODE_LIGHT   = 6   # v2
+
+# UartCmdCode (contracts/_generated/uart_protocol.h)
+CMD_START        = 0x01
+CMD_STOP         = 0x02
+CMD_FIND         = 0x03
+CMD_GET_CONFIG   = 0x05
+CMD_RESET_FAULT  = 0x10
+CMD_CLEAR_ERRORS = 0x12
 
 # UnitCapabilities
 CAP_HEATER           = 0x0001
@@ -196,6 +212,233 @@ class FrameParser:
 # ---------------------------------------------------------------------------
 # Payload builders
 # ---------------------------------------------------------------------------
+
+# ── Simulated units ───────────────────────────────────────────────────────────
+# Previously this emulator transmitted a fixed script: mode was hardcoded to
+# DRYING and commands were ACKed then thrown away, so pressing Stop in the UI
+# looked broken even though the device had sent the frame correctly. These units
+# hold real state and react.
+
+AMBIENT_C = 24.0
+
+class SimUnit:
+    def __init__(self, unit_id):
+        self.id = unit_id
+        self.mode = MODE_IDLE
+        self.target_temp = 0.0
+        self.target_hum = 0
+        self.duration_min = 0
+        self.started = 0.0
+        self.session = 0
+        self.temp = AMBIENT_C + unit_id * 1.5
+        self.hum = 45.0 - unit_id * 3.0
+
+    @property
+    def running(self):
+        return self.mode in (MODE_DRYING, MODE_STORAGE, MODE_PROFILE)
+
+    def start(self, mode, target_temp, arg1):
+        self.mode = mode
+        self.target_temp = target_temp
+        self.session += 1
+        self.started = time.time()
+        if mode == MODE_DRYING:
+            self.duration_min, self.target_hum = int(arg1), 0
+        else:                       # storage holds humidity, runs open-ended
+            self.duration_min, self.target_hum = 0, int(arg1)
+
+    def stop(self):
+        self.mode = MODE_IDLE
+        self.target_temp = 0.0
+        self.target_hum = 0
+        self.duration_min = 0
+
+    def elapsed(self):
+        return int(time.time() - self.started) if self.running else 0
+
+    def tick(self, dt):
+        """Crude first-order approach to target, so the UI shows movement."""
+        goal = self.target_temp if self.running else AMBIENT_C
+        self.temp += (goal - self.temp) * min(1.0, dt / 45.0)
+        # Drying pulls humidity down; idle lets it creep back up.
+        hgoal = (self.target_hum or 12.0) if self.running else 45.0
+        self.hum += (hgoal - self.hum) * min(1.0, dt / 60.0)
+        # A drying run ends on its own when the timer expires.
+        if self.mode == MODE_DRYING and self.duration_min:
+            if self.elapsed() >= self.duration_min * 60:
+                self.stop()
+
+    def heater_pct(self):
+        if not self.running:
+            return 0
+        gap = self.target_temp - self.temp
+        return max(0, min(100, int(gap * 25)))
+
+    def fan(self):
+        return self.running
+
+
+
+# ── Menu config (answer to GetConfig) ─────────────────────────────────────────
+# The device asks for this after every Hello and cannot render its menu browser
+# without it. Shape is dictated by menu_parseFullConfig() in lib/idryer-menu:
+#
+#   * a "vals" object is mandatory — the parser returns false without it
+#   * the literal key "full" must be present, otherwise ConfigReceiver::isDelta()
+#     treats the payload as a delta (it greps for "full" in the raw JSON)
+#   * "rev" (or "v") is the revision the UI displays
+#   * per-unit ids carry an array, global ids a scalar; scope comes from
+#     g_menu_meta on the device, so sending the wrong shape silently misfiles
+#
+# Ids below are the documented ones from docs/menu-json-format.json.
+
+MENU_META_H = pathlib.Path(__file__).resolve().parent.parent / "lib/idryer-menu/src/menu_meta.h"
+
+# Entry shape in the generated header:
+#   { 3, { "..", ".." }, { "..", ".." },
+#     META_VALUE, 2, -1, 0,
+#     META_VT_F32, 30.0f, 110.0f, 1.0f, META_SCOPE_PER_UNIT, nullptr },
+_META_RE = re.compile(
+    r"\{\s*(\d+),\s*\{.*?\},\s*\{.*?\},\s*"
+    r"(META_\w+),\s*-?\d+,\s*-?\d+,\s*\d+,\s*"
+    r"META_VT_(\w+),\s*([-\d.eE]+)f,\s*([-\d.eE]+)f,\s*([-\d.eE]+)f,\s*"
+    r"(META_SCOPE_\w+)",
+    re.S)
+
+
+def load_menu_meta():
+    """Parse the generated menu metadata so emitted values are always in range.
+
+    Hardcoding ids is a trap: docs/menu-json-format.json still lists v1's
+    key_ids, where 13 was PRESET_PLA_TEMP. On controller v2, id 13 is FIRST
+    STAGE with range 1..10, so the documented value of 55 is nonsense. Reading
+    the same header the firmware compiles against keeps the two in step.
+    """
+    try:
+        text = MENU_META_H.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    out = []
+    for m in _META_RE.finditer(text):
+        mid, mtype, _vt, lo, hi, _step, scope = m.groups()
+        if mtype not in ("META_VALUE", "META_TOGGLE"):
+            continue          # submenu/action items hold no value
+        out.append({
+            "id": int(mid),
+            "toggle": mtype == "META_TOGGLE",
+            "min": float(lo),
+            "max": float(hi),
+            "per_unit": scope == "META_SCOPE_PER_UNIT",
+        })
+    out.sort(key=lambda i: i["id"])
+    return out
+
+
+def build_menu_json(units: int, rev: int = 8, overrides=None) -> bytes:
+    """Full-config JSON for menu_parseFullConfig().
+
+    Requirements come from the parser, not from taste:
+      * "vals" is mandatory — it returns false without it
+      * the literal "full" must appear, or ConfigReceiver::isDelta() greps for
+        it, misses, and treats the whole thing as a delta
+      * per-unit ids take an array, globals a scalar; the device decides which
+        from g_menu_meta, so the wrong shape silently misfiles the value
+    """
+    meta = load_menu_meta()
+    overrides = overrides or {}
+    parts = []
+
+    # Language and units-count are positional, not fixed ids: menu_commands.cpp
+    # takes them as MENU_META_COUNT-1 and -2. (docs/menu-json-format.json still
+    # names 144/143 from v1, where they are now a submenu and an action.)
+    #
+    # They need real values rather than a mid-range guess. Language especially —
+    # its range is 0..1, whose midpoint rounds to 0 (Russian), and because vals
+    # is parsed after the document root it silently overrides "lang":"en" there.
+    count = len(meta) and max(i["id"] for i in meta) + 1
+    total_ids = 202 if not count else max(count, 202)
+    lang_id, units_id = total_ids - 1, total_ids - 2
+    pinned = {lang_id: 1, units_id: units}   # 1 = en
+
+    # Preset TIME ids, so they can be filled from the sibling TEMP rather than
+    # from a mid-range that is identical for every material.
+    by_id = {i["id"]: i for i in meta}
+    preset_time_ids = {}
+    for mid in range(56, 56 + 17 * 4, 4):          # PRESETS children, stride 4
+        t_id, tm_id = mid + 1, mid + 2
+        if t_id in by_id and tm_id in by_id:
+            lo, hi = by_id[t_id]["min"], by_id[t_id]["max"]
+            preset_time_ids[tm_id] = preset_time_for(lo + (hi - lo) * 0.5)
+
+    if meta:
+        for item in meta:
+            lo, hi = item["min"], item["max"]
+            # Pins are the *starting* value, not a lock — an inbound `set` must
+            # still win, or changing the language from the UI would appear to be
+            # accepted and then be silently reverted by the next config echo.
+            if item["id"] in pinned:
+                v = pinned[item["id"]]
+            elif item["id"] in preset_time_ids:
+                v = preset_time_ids[item["id"]]
+            elif item["toggle"]:
+                v = 0
+            elif hi > lo:
+                v = round(lo + (hi - lo) * 0.5)      # mid-range, always legal
+            else:
+                v = round(lo)
+            if item["per_unit"]:
+                vals_u = [overrides.get((item["id"], u), v) for u in range(units)]
+                parts.append(f'"{item["id"]}":{json.dumps(vals_u)}')
+            else:
+                parts.append(f'"{item["id"]}":{overrides.get((item["id"], 0), v)}')
+    else:
+        # Header not found (running the tool standalone) — minimal fallback.
+        for i in (3, 4, 7, 8):
+            parts.append(f'"{i}":{json.dumps([60] * units)}')
+
+    body = ",".join(parts)
+    doc = (f'{{"rev":{rev},"full":true,"units":{units},'
+           f'"active":0,"lang":"en","vals":{{{body}}}}}')
+    return doc.encode()
+
+
+def preset_time_for(temp_c: float) -> int:
+    """Plausible drying minutes for a material, inferred from its temperature.
+
+    Every preset's TIME item declares the same 0..600 range, so a mid-range
+    guess gives all 17 materials an identical 5 h and the UI looks broken even
+    though it is faithfully reporting what it was told. Temperature ranges *do*
+    differ per material (PLA 35..55, ABS 70..90, PC higher still), so the band
+    is a reasonable stand-in for how stubborn the filament is. Cosmetic: a real
+    controller ships its own per-material defaults.
+    """
+    if temp_c < 50:   return 240      # PLA family, 4 h
+    if temp_c < 70:   return 300      # PETG, 5 h
+    if temp_c < 90:   return 360      # ABS / PA, 6 h
+    return 420                        # PC and friends, 7 h
+
+
+def send_config(ser, state, units: int):
+    """Chunk the menu JSON over ConfigPush frames."""
+    payload = build_menu_json(units, rev=state.get('config_rev', 8),
+                              overrides=state.get('overrides', {}))
+    total = len(payload)
+    chunk_max = UART_MAX_PAYLOAD - CONFIG_CHUNK_HEADER_SIZE
+    transfer_id = state['config_tid'] = (state.get('config_tid', 0) + 1) & 0x7FFF
+
+    idx = 0
+    for off in range(0, total, chunk_max):
+        data = payload[off:off + chunk_max]
+        last = (off + len(data)) >= total
+        # transferId(u16) totalSize(u16) chunkIndex(u8) pad(u8)
+        head = struct.pack('<HHBB', transfer_id, total, idx, 0)
+        flags = FLAG_ACK_REQUIRED | (FLAG_LAST_FRAGMENT if last else 0)
+        state['seq'] = send_frame(ser, KIND_CONFIG_PUSH, head + data, state['seq'], flags)
+        idx += 1
+    print(f"[TX] Config: {total}B in {idx} chunk(s), tid={transfer_id}, "
+          f"rev={state.get('config_rev', 8)}")
+
+
 def make_unit_config(unit_id: int, caps: int, scales: list, rfid: list) -> bytes:
     """UnitConfig: 12 байт."""
     scales_b = bytes((scales + [0xFF] * 4)[:4])
@@ -206,13 +449,16 @@ def make_unit_config(unit_id: int, caps: int, scales: list, rfid: list) -> bytes
 def make_hello(fw_major: int = 2, fw_minor: int = 0, fw_patch: int = 0,
                units_count: int = 2, mcu_serial: str = "36B955AB4350") -> bytes:
     """
-    HelloPayload: 86 байт.
-    role(1) + pad(3) + fwVer(4) + workTime(4) + hwVer[8] + unitsCount(1) + units[4](48) + mcuSerial[17]
+    HelloPayload: 94 байта (protocol v2).
+    role(1) + pad(3) + fwVer(4) + workTime(4) + hwVer[16] + unitsCount(1) + units[4](48) + mcuSerial[17]
+
+    v2 расширил hardwareVersion с 8 до 16 байт. UartBridge::validateLength
+    сравнивает длину точно, поэтому 86-байтный Hello просто отбрасывается.
     """
     role      = bytes([ROLE_MCU, 0, 0, 0])
     fw_ver    = struct.pack('<I', (fw_major << 16) | (fw_minor << 8) | fw_patch)
     work_time = struct.pack('<I', 3600)
-    hw_ver    = b'v1.0\x00\x00\x00\x00'
+    hw_ver    = b'rp2040-v1'.ljust(16, b'\x00')
     u_count   = bytes([units_count])
 
     unit0 = make_unit_config(0, CAP_ALL, [0, 1], [0])   # U1: W0,W1 / R0
@@ -223,7 +469,7 @@ def make_hello(fw_major: int = 2, fw_minor: int = 0, fw_patch: int = 0,
     serial_b = mcu_serial.encode()[:16].ljust(17, b'\x00')
 
     payload = role + fw_ver + work_time + hw_ver + u_count + unit0 + unit1 + unit2 + unit3 + serial_b
-    assert len(payload) == 86, f"HelloPayload size {len(payload)} != 86"
+    assert len(payload) == 94, f"HelloPayload size {len(payload)} != 94"
     return payload
 
 
@@ -242,6 +488,12 @@ def make_telemetry(units: list) -> bytes:
                             hum_pct10,
                             u['heater_pct'],
                             1 if u['fan'] else 0)
+    # The wire struct is a fixed count(1) + units[4]*7 = 29 bytes, and
+    # UartBridge::validateLength compares exactly. Without this padding a
+    # single-unit frame is 8 bytes and gets dropped silently.
+    while len(data) < 1 + 4 * 7:
+        data += struct.pack('<BhHBB', 0, 0, 0, 0, 0)
+    assert len(data) == 29, f"TelemetryPayload size {len(data)} != 29"
     return data
 
 
@@ -254,11 +506,14 @@ def make_status(units: list, uptime: int = 0) -> bytes:
     """
     data = bytes([len(units)])
     for u in units:
-        entry = struct.pack('<BBIHHIIIIBBBB',
+        # <BBIhHHIIIIBBBB — 14 fields, 32 bytes. The old format string had only
+        # 13: durationMinutes was missing and targetTempC10 was packed unsigned
+        # despite being int16_t, so make_status() raised on every call.
+        entry = struct.pack('<BBIhHHIIIIBBBB',
                             u['id'],
                             u.get('mode', MODE_IDLE),
                             u.get('session', 0),
-                            int(u.get('target_temp', 0) * 10),
+                            int(u.get('target_temp', 0) * 10),   # int16, signed
                             u.get('target_hum', 0),
                             u.get('duration_min', 0),
                             u.get('elapsed', 0),
@@ -272,10 +527,13 @@ def make_status(units: list, uptime: int = 0) -> bytes:
         assert len(entry) == 32, f"StatusEntry size {len(entry)} != 32"
         data += entry
     # Дополнить до 4 юнитов пустыми (упрощение для фиксированного размера)
-    empty = struct.pack('<BBIHHIIIIBBBB', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    empty = struct.pack('<BBIhHHIIIIBBBB', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
     while len(data) < 1 + 4 * 32:
         data += empty
     data += struct.pack('<I', uptime)
+    # v2: device-wide флаг блокировки внешних команд. 0 = команды принимаются.
+    data += bytes([0])
+    assert len(data) == 134, f"StatusPayload size {len(data)} != 134"
     return data
 
 
@@ -343,6 +601,30 @@ def handle_frame(ser, kind, flags, seq, payload, state):
             cmd_code, target_state, unit_id = struct.unpack('<BBB', payload[:3])
             arg0, arg1 = struct.unpack('<II', payload[5:13])
             print(f"[RX] Command: code=0x{cmd_code:02X} unit={unit_id} arg0={arg0} arg1={arg1}")
+
+            units = state['units']
+            if cmd_code == CMD_START and unit_id < len(units):
+                # arg0 is target temperature in tenths; arg1 is minutes (drying)
+                # or target humidity (storage).
+                units[unit_id].start(target_state, arg0 / 10.0, arg1)
+                u = units[unit_id]
+                print(f"      -> unit {unit_id} {'DRYING' if u.mode == MODE_DRYING else 'STORAGE'} "
+                      f"target={u.target_temp:.0f}C arg1={arg1}")
+            elif cmd_code == CMD_STOP:
+                # unitId 0xFF (or out of range) means every unit.
+                targets = units if unit_id >= len(units) else [units[unit_id]]
+                for u in targets:
+                    u.stop()
+                print(f"      -> stopped {len(targets)} unit(s)")
+            elif cmd_code in (CMD_RESET_FAULT, CMD_CLEAR_ERRORS):
+                for u in units:
+                    if u.mode == MODE_FAULT:
+                        u.stop()
+                print("      -> faults cleared")
+            elif cmd_code == CMD_FIND:
+                print(f"      -> find unit {unit_id} (beep)")
+            elif cmd_code == CMD_GET_CONFIG:
+                send_config(ser, state, len(units))
         else:
             print(f"[RX] Command (короткий payload {len(payload)}B)")
         if flags & FLAG_ACK_REQUIRED:
@@ -362,6 +644,24 @@ def handle_frame(ser, kind, flags, seq, payload, state):
         if flags & FLAG_ACK_REQUIRED:
             ack = make_config_ack(seq)
             state['seq'] = send_frame(ser, KIND_CONFIG_ACK, ack, state['seq'], FLAG_IS_ACK)
+
+        # Apply the write and echo the new config back, which is what actually
+        # updates the device's menu cache. Without this a 'set' is acknowledged
+        # and silently discarded, so the UI appears to accept edits that never
+        # stick — the same trap the hardcoded status had.
+        try:
+            req = json.loads(json_data)
+        except Exception:
+            req = None
+        if isinstance(req, dict) and req.get('cmd') == 'set' and 'id' in req:
+            mid = int(req['id']); unit = int(req.get('unit', 0))
+            val = req.get('val', 0)
+            state.setdefault('overrides', {})[(mid, unit)] = val
+            state['config_rev'] = state.get('config_rev', 8) + 1
+            print(f"      -> set id={mid} unit={unit} val={val}; rev now {state['config_rev']}")
+            send_config(ser, state, len(state['units']))
+        elif isinstance(req, dict) and req.get('cmd') == 'invoke':
+            print(f"      -> invoke id={req.get('id')}")
 
     elif kind == KIND_HEARTBEAT:
         if len(payload) >= 9:
@@ -386,10 +686,91 @@ def handle_frame(ser, kind, flags, seq, payload, state):
 # ---------------------------------------------------------------------------
 # Главный цикл
 # ---------------------------------------------------------------------------
+
+
+# Remembering the choice is what makes --port auto usable: the board's console
+# is normally connected as well, so there are almost always two candidates.
+_PORT_MEMO = pathlib.Path.home() / ".idryer_emulator_port"
+
+
+def _remember_port(dev: str) -> None:
+    try:
+        _PORT_MEMO.write_text(dev, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _recall_port():
+    try:
+        return _PORT_MEMO.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def resolve_port(requested: str) -> str:
+    """Turn --port into a real device, or explain clearly why it cannot.
+
+    A shell glob for the adapter is a trap: if it is unplugged, zsh fails the
+    glob, $() yields an empty string, and pyserial raises a traceback about
+    opening ''. Do the lookup here so the failure says what is actually wrong.
+    """
+    from serial.tools import list_ports
+
+    def candidates():
+        out = []
+        for p in list_ports.comports():
+            name = p.device
+            if "Bluetooth" in name or "debug-console" in name:
+                continue
+            out.append(p)
+        return out
+
+    if requested and requested != "auto":
+        import os
+        if os.path.exists(requested):
+            _remember_port(requested)
+            return requested
+        print(f"[HOST] Port not found: {requested}")
+        found = candidates()
+        if found:
+            print("[HOST] Available:")
+            for p in found:
+                print(f"         --port {p.device:34} {p.description}")
+        else:
+            print("[HOST] No USB serial adapters are connected.")
+        raise SystemExit(2)
+
+    found = candidates()
+    if not found:
+        print("[HOST] No USB serial adapter found. Plug one in, or pass --port.")
+        raise SystemExit(2)
+    if len(found) == 1:
+        print(f"[HOST] Auto-selected {found[0].device} ({found[0].description})")
+        _remember_port(found[0].device)
+        return found[0].device
+
+    # The board's own console is essentially always plugged in too, so "several
+    # ports" is the normal case, not the exception — refusing to choose would
+    # make auto useless. Prefer whichever port worked last time.
+    last = _recall_port()
+    if last:
+        for p in found:
+            if p.device == last:
+                print(f"[HOST] Auto-selected {p.device} ({p.description}) — used last time")
+                return p.device
+
+    print("[HOST] Several serial ports are connected — say which one:")
+    for p in found:
+        print(f"         --port {p.device:34} {p.description}")
+    print("[HOST] (the board's own USB is its console, not the controller link)")
+    print("[HOST] Once given explicitly it is remembered, and --port auto works after that.")
+    raise SystemExit(2)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Эмулятор RP2040 для UART-протокола iDryer")
-    parser.add_argument("--port", default="/dev/cu.usbserial-130",
+    parser.add_argument("--port", default="auto",
                         help="UART порт")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--session", type=int, default=120,
@@ -401,6 +782,8 @@ def main():
     parser.add_argument("--rfid", action="store_true",
                         help="Отправить RFID tag_detected событие")
     args = parser.parse_args()
+
+    args.port = resolve_port(args.port)
 
     ser = serial.Serial()
     ser.port = args.port
@@ -415,6 +798,7 @@ def main():
     state = {
         'seq': 0,
         'hello_sent': False,
+        'units': [SimUnit(i) for i in range(args.units)],
     }
 
     t_start      = time.time()
@@ -439,6 +823,14 @@ def main():
 
             now = elapsed()
 
+            # --- Advance the simulated units ---
+            t_now = time.time()
+            dt = t_now - state.get('t_last_tick', t_now)
+            state['t_last_tick'] = t_now
+            if dt > 0:
+                for u in state['units']:
+                    u.tick(dt)
+
             # --- Hello (каждые 30 с или первый раз через 2 с) ---
             if now - t_hello > (2.0 if not state['hello_sent'] else 30.0):
                 hello = make_hello(
@@ -456,9 +848,9 @@ def main():
             # --- Telemetry (каждые 5 с) ---
             if now - t_telemetry > 5.0:
                 units_tel = [
-                    {'id': i, 'temp_c': 55.3 + i * 2, 'hum_pct': 23.0,
-                     'heater_pct': 75, 'fan': True}
-                    for i in range(args.units)
+                    {'id': u.id, 'temp_c': u.temp, 'hum_pct': u.hum,
+                     'heater_pct': u.heater_pct(), 'fan': u.fan()}
+                    for u in state['units']
                 ]
                 tel = make_telemetry(units_tel)
                 state['seq'] = send_frame(ser, KIND_TELEMETRY, tel, state['seq'],
@@ -469,17 +861,20 @@ def main():
             # --- Status (каждые 10 с) ---
             if now - t_status > 10.0:
                 units_st = [
-                    {'id': i, 'mode': MODE_DRYING, 'session': 1,
-                     'target_temp': 55.0, 'target_hum': 20,
-                     'duration_min': 240, 'elapsed': int(now),
-                     'remaining': max(0, 14400 - int(now))}
-                    for i in range(args.units)
+                    {'id': u.id, 'mode': u.mode, 'session': u.session,
+                     'target_temp': u.target_temp, 'target_hum': u.target_hum,
+                     'duration_min': u.duration_min, 'elapsed': u.elapsed(),
+                     'remaining': max(0, u.duration_min * 60 - u.elapsed())}
+                    for u in state['units']
                 ]
                 st = make_status(units_st, uptime=int(now))
                 state['seq'] = send_frame(ser, KIND_STATUS, st, state['seq'],
                                           FLAG_ACK_REQUIRED)
                 t_status = now
-                print(f"[TX] Status (DRYING, elapsed={int(now)}s)")
+                summary = " ".join(
+                    f"U{u.id+1}:{['idle','dry','store','profile','fault','heat','light'][u.mode]}"
+                    f"@{u.temp:.1f}C" for u in state['units'])
+                print(f"[TX] Status {summary}")
 
             # --- Weights (каждые 10 с) ---
             if now - t_weights > 10.0:

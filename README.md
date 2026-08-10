@@ -1,57 +1,223 @@
-# iDryer Link
+# iDryer Touch
 
-**iDryer Link** is a connectivity module for iDryer. It connects to the controller through the RJ45 port and brings the device online: after Wi-Fi setup, the dryer can work with the iDryer portal and mobile app.
+A cloud-free fork of [iDryer Link](https://github.com/pavluchenkor/iDryer-Link)
+that puts a local web UI and a touchscreen on an iDryer.
 
-The RJ45 port is used as a power and UART connector here. **It is not a network port**: do not connect Link to a switch or router.
+No portal account, no MQTT broker, no TLS, no device claiming. The firmware talks
+to the dryer's RP2040 controller over UART and serves everything itself on your
+LAN. Same idea as [iHeater Remote](https://github.com/justinh-rahb/iHeater-Remote),
+applied to the dryer.
 
-![iDryer Link](docs/img/link2.png)
+> **Status: running on hardware, not yet on a dryer.** Flashed to an
+> ESP32-2432S028R and verified: panel, touch and calibration, Wi-Fi
+> provisioning, the web UI and API over LAN, idle blanking, and the full UART
+> handshake — telemetry, status, menu, presets and start/stop — against
+> `tools/emulate_controller.py`. It has never been connected to an actual iDryer
+> controller, and the web UI has no authentication. See [TODO.md](TODO.md).
 
-## What Link Does
+## What it does
 
-- Connects iDryer to the internet over Wi-Fi.
-- Links the device to [portal.idryer.org](https://portal.idryer.org).
-- Works with the iDryer mobile app.
-- Supports firmware installation through the web flasher.
-- Provides open wiring diagrams and a CAD case file.
+- **Local web dashboard** — per-unit air temperature, humidity, heater duty, fan
+  state, mode and run progress, pushed over a WebSocket.
+- **Drying and storage control** — start, stop, set targets, per unit.
+- **Controller menu browser** — the dryer's own menu tree, rendered from what the
+  controller declares over UART. Editing a value writes it back the same way the
+  jog wheel does.
+- **Wi-Fi setup** — joins your network, or falls back to an `iDryer Touch XXXX`
+  access point with a captive portal.
+- **Local OTA** — upload firmware from the browser. A/B partitions, no cloud.
+- **Touch GUI** on the ESP32 CYD — five LVGL screens sized for a resistive
+  panel: status, start drying, start storage, device info, and a no-link state.
 
-## App And Portal
+No iDryerControllerV2 firmware changes are required — this is an ordinary `LNK`
+client of the controller's existing UART protocol.
 
-- [iDryer on the App Store](https://apps.apple.com/app/idryer/id6760609044)
-- [iDryer on Google Play](https://play.google.com/store/apps/details?id=org.idryer.mobile)
-- [iDryer Portal](https://portal.idryer.org)
-- [Web flasher](https://install.idryer.org)
+**Whether the stock OLED and jog wheel survive depends on which port you use.**
+They are not on the controller board; they are a `SCR` device on PORT 3, and the
+firmware only creates the encoder and display when `hasScreen()` is true:
 
-![iDryer Portal dashboard](docs/img/portal1.png)
+| Layout | Units | Stock OLED + jog wheel | Local control |
+| --- | ---: | --- | --- |
+| `EXT` / `EXT` / `LNK` | **3** | **gone** | this panel only |
+| `EXT` / `LNK` / `SCR` | 2 | kept | both |
 
-![iDryer Portal spool storage](docs/img/portal2.png)
+So it is a real trade: the third drying unit, or the jog wheel. Worth deciding
+before wiring, because it also changes how much this panel needs to do — with
+PORT 3 = `LNK` there is no jog wheel to fall back on, and the 202-item menu tree
+is reachable only from the web UI.
 
-## Quick Start
+The touch panel deliberately does less than the web UI: one unit at a time, big
+steppers instead of sliders or a keypad, and no full menu tree — on a 320×240
+resistive screen those are the things that do not work.
 
-1. Assemble the RJ45 cable using the [wiring diagram in the guide](docs/README.en.md#how-to-connect-to-the-controller).
-2. Connect the wires to the ESP32-C3 board.
-3. Flash Link through [install.idryer.org](https://install.idryer.org), following the instructions on the site.
+## Hardware
 
-Full guide: [docs/README.en.md](docs/README.en.md)
+Target board is the classic **ESP32-2432S028R "Cheap Yellow Display"** — 2.8"
+320×240 ILI9341, XPT2046 resistive touch, classic ESP32, 4 MB flash, no PSRAM.
 
-## Diagrams And Files
+Only three GPIOs on that board are unallocated (22, 27, and input-only 35), so the
+UART bridge to the controller uses the `CN1` header. This pairing is proven on
+the same board by [klipper-micro](https://github.com/justinh-rahb/klipper-micro),
+which runs UART2 on GPIO22/27 at 250000 baud:
 
-![Link connection](docs/img/link1.png)
+| CN1 pin | Connects to |
+| --- | --- |
+| GND | RJ45 GND |
+| GPIO22 | controller UART RX |
+| GPIO27 | controller UART TX |
+| 3V3 | — |
 
-- [Russian guide](docs/README.ru.md)
-- [English guide](docs/README.en.md)
-- [RJ45 diagram](docs/img/RJ45.png)
-- [Wiring diagram](docs/img/wiring.png)
-- [ESP32-C3 Super Mini board](docs/img/esp32superMini.png)
-- [ESP32-C3 Super Mini pinout](docs/img/ESP32-C3-Super-Mini-pinout-low.jpg)
-- [ESP32-C3 Zero Waveshare pinout](docs/img/ESP32-C3-ZERO-Waveshare-pinout-low.jpg)
-- [Case CAD file](docs/cad/link-case.stp)
+Power the board from the RJ45's 5V into `P1` VIN. `P1`'s TX/RX are wired to the
+CH340 — use that header for power only.
 
-## For Developers
+### Controller side
 
-Technical materials are kept in a separate section:
+The RJ45 on the dryer is **power and UART, not Ethernet**. Do not plug it into a
+switch or router. From the controller schematic
+([port-wiring.png](docs/img/port-wiring.png)), per port:
 
-- [Repository notes](docs/developer/repository-workflow.md)
-- [Post-build scripts](docs/developer/POST_BUILD_SCRIPTS.md)
-- [Staging](docs/developer/STAGING.md)
-- [Developer tools](docs/developer/TOOLS.md)
-- [Documentation map](docs/guide/README.md)
+| RJ45 pin | Signal | Goes to |
+| --- | --- | --- |
+| 2 | +5V | CYD `P1` VIN |
+| 7 | GND | CYD `P1` GND |
+| 4 | controller RXD | CYD GPIO22 (our TX) |
+| 6 | controller TXD | CYD GPIO27 (our RX) |
+
+### Which port, and configuring it
+
+**The port must be set to `LNK` before any of this works.** The controller
+snapshots its port configuration at boot, so set it and reboot:
+
+```
+MENU -> GLOBAL -> PORT CONFIG -> PORT 3 = LNK
+```
+
+Port roles are `EXT` (dryer module), `SCR` (OLED I2C screen), `SCL` (HX711
+scales) and `LNK` (*WiFi/Touch over UART* — that is this project). They are not
+interchangeable, and `src/hardware/port_config.h` restricts which port takes
+which:
+
+| Menu name | Connector | Allowed roles |
+| --- | --- | --- |
+| PORT 1 | U2 | `EXT`, `SCL` |
+| PORT 2 | U3 | `EXT`, `SCL`, `LNK` |
+| PORT 3 | U4 | `SCR`, `LNK` |
+
+`SCR`, `SCL` and `LNK` are singletons, and `PORT 2 = EXT` requires
+`PORT 1 = EXT`.
+
+**This display costs you nothing in drying units.** Unit count comes only from
+the `EXT` chain — base 1 for the built-in module, +1 for `PORT 1 = EXT`, +1 for
+`PORT 2 = EXT` — and PORT 3 is never part of it. So the best layout puts us on
+PORT 3 and keeps all three units:
+
+| PORT 1 | PORT 2 | PORT 3 | Units | Notes |
+| --- | --- | --- | ---: | --- |
+| `EXT` | `EXT` | `LNK` | **3** | maximum units, no scales |
+| `EXT` | `SCL` | `LNK` | 2 | scales on U3 |
+| `SCL` | `LNK` | `SCR` | 1 | our device on U3, OLED on U4 |
+
+`MENU_MAX_UNITS` is 3 to match, so a controller reporting more gets clamped with
+a warning.
+
+> **Verify with a meter before powering anything.** Upstream ships two diagrams
+> that do not agree: the schematic puts UART on pins 4/6 and ground on 7, while
+> [wiring.png](docs/img/wiring.png) maps the colours to pins 3/5 with ground on
+> 8 (against the T568B order in [RJ45.png](docs/img/RJ45.png)). Multi-unit
+> dryers have one RJ45 per unit. Getting +5V onto a GPIO ends the board.
+
+Pins are build flags (`IDRYER_UART_TX_PIN` / `IDRYER_UART_RX_PIN`), so other
+boards only need a new environment.
+
+## Build
+
+A full clone is ~230 MB — upstream committed a PlatformIO toolchain early on
+(`.pio-home/`, ~450 MB of compilers and caches) and removed it two commits later,
+so it lives in history forever. Nothing needs that history:
+
+```bash
+git clone --depth 1 --recurse-submodules https://github.com/justinh-rahb/iDryer-Touch.git
+```
+
+Then:
+
+```bash
+scripts/bootstrap.sh
+```
+
+```bash
+scripts/build.sh cyd-2432s028r
+```
+
+`bootstrap.sh` initialises submodules and verifies the dependency layout — upstream
+ships two symlinks pointing into the original author's home directory, so a plain
+`git clone` of the parent project cannot build. See
+[ARCHITECTURE.md §2](docs/ARCHITECTURE.md) for what was replaced and why
+`idryer-core` is pinned to an exact commit rather than a branch.
+
+Other useful invocations:
+
+```bash
+scripts/build.sh --list
+```
+
+```bash
+scripts/sync-menu.sh
+```
+
+`sync-menu.sh` re-mirrors the controller's menu metadata. It is deliberately
+opt-in and dry-run by default — the mirror is firmware-coupled, and adopting a
+menu your dryer is not running makes the two ends disagree about what a given
+menu item means.
+
+## HTTP API
+
+Everything the UI does is available directly.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/` | Dashboard |
+| GET | `/setup` | Wi-Fi form |
+| GET | `/fw` | Firmware upload page |
+| GET | `/api/status` | Full device + per-unit state as JSON |
+| GET | `/api/menu?from=&count=` | Menu tree, paged |
+| POST | `/api/command?do=drying\|storage\|stop\|get_config` | Run control |
+| POST | `/api/set?id=&unit=&val=` | Write a menu value |
+| POST | `/api/invoke?id=` | Trigger a menu action |
+| POST | `/api/wifi`, `/api/wifi/clear`, `/api/setup` | Credentials |
+| POST | `/api/ota` | Firmware upload |
+
+A WebSocket on **port 81** pushes the same payload as `/api/status` whenever it
+changes.
+
+`/api/menu` is paged because the controller's full tree is ~26 KB serialised and
+must never be assembled in one buffer — see the note on `menu_buildFullJson` in
+[TouchApp.cpp](src/touch/TouchApp.cpp).
+
+## Layout
+
+| Path | What |
+| --- | --- |
+| `src/touch/` | The local-only firmware (this fork's work) |
+| `src/main_v2.cpp` | Upstream's cloud bridge, compiled out by `IDRYER_TOUCH_LOCAL` |
+| `lib/idryer-core` | Submodule, pinned — upstream's platform library |
+| `lib/idryer-menu/` | Committed mirror of the controller's menu metadata |
+| `vendor/iDryerControllerV2` | Submodule — controller firmware, reference + menu source |
+| `docs/ARCHITECTURE.md` | Architecture, findings, and what's left |
+
+The cloud path is guarded rather than deleted, so merges from `upstream` stay
+clean. Upstream's ESP32-C3 environments still build unchanged.
+
+## Credits
+
+- [pavluchenkor/iDryer-Link](https://github.com/pavluchenkor/iDryer-Link),
+  [iDryerControllerV2](https://github.com/pavluchenkor/iDryerControllerV2) and
+  [idryer-core](https://github.com/pavluchenkor/idryer-core) — the upstream
+  project this forks.
+- The web layer is adapted from
+  [iHeater Remote](https://github.com/justinh-rahb/iHeater-Remote).
+
+Upstream's cloud-era documentation (portal onboarding, staging access, the
+flasher-portal build scripts) has been removed — none of it applies here. The
+RJ45 diagrams under [docs/img/](docs/img/) are kept because the controller side
+is unchanged.

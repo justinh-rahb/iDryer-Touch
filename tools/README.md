@@ -1,176 +1,83 @@
-# Инструменты разработчика iDryer Link
+# Tools
 
-Набор инструментов для тестирования и отладки протоколов iDryer Link.
+## `emulate_controller.py`
 
-## 🔧 Инструменты тестирования
+Pretends to be the iDryer's RP2040 controller over UART, so the firmware can be
+exercised without a dryer attached. Given nothing in this repo has been flashed
+yet, this is the cheapest way to test the UART bridge, the menu flow and both
+UIs against something that talks back.
 
-### test_uart_rp2040_emulator.py
-**Назначение:** Эмулятор MCU (RP2040) для тестирования ESP32 без физического контроллера  
-**Протокол:** UART версии 1 (синхронизирован с lib/idryer-protocol)
+Only needs `pyserial`.
 
-**Запуск:**
 ```bash
-python3 test_uart_rp2040_emulator.py /dev/ttyUSB0
+~/.platformio/penv/bin/python tools/emulate_controller.py --units 3 --session 86400
 ```
 
-**Возможности:**
-- ✅ Актуальные структуры данных (HelloPayload 86 байт, StatusEntry 32 байта)
-- ✅ Двусторонняя коммуникация (обработка Command, ConfigPush)
-- ✅ Interactive режим с автоответами
-- ✅ Поддержка всех MessageKind и флагов протокола
-- ✅ Эмуляция units topology, RFID событий, claiming
+`--port` defaults to `auto`. Give it explicitly once:
 
-**Обновления v2.0:**
-- Исправлены критические несоответствия размеров структур
-- Добавлена обработка входящих сообщений от ESP32
-- Поддержка ConfigPush/ConfigAck для remote config
-- Interactive режим для полноценного тестирования
+```bash
+~/.platformio/penv/bin/python tools/emulate_controller.py --port /dev/cu.PL2303G-XXXX --units 3 --session 86400
+```
+
+after which the choice is remembered in `~/.idryer_emulator_port` and `auto`
+finds it again. That matters because the board's own USB console is normally
+plugged in too, so there are almost always two candidates and `auto` would
+otherwise have to refuse. Port numbers also move across replugs
+(`PL2303G-USBtoUART110` becomes `...210`), so do not pin one in a script — and
+do not use a shell glob, which fails confusingly when the adapter is unplugged.
+
+Use PlatformIO's Python. The system one has no `pyserial`.
+
+It sends Hello two seconds after start, then telemetry every 5 s, status every
+10 s and heartbeats, and it responds to HelloRequest, Command and ConfigPush
+coming back from the ESP32. `--rfid` injects a tag event, `--session` sets the
+run length, `--fw-major` picks the reported firmware major.
+
+`--units` accepts 1-4 because the UART contract carries `units[4]`, but the menu
+mirror is `MENU_MAX_UNITS`, which is **3** on controller v2. Ask for 4 and the
+device logs a clamp warning and settles on 3 — that is the firmware being honest,
+not a fault.
+
+Wire the emulator's serial adapter to the CYD's `CN1` (TX=GPIO22, RX=GPIO27,
+crossed), not to the CYD's USB port — that is the CH340 console.
+
+### Wiring
+
+USB-TTL adapter to the CYD's `CN1` header, crossed:
+
+| Adapter | CN1 |
+| --- | --- |
+| GND | GND |
+| RX | GPIO22 (the CYD's TX) |
+| TX | GPIO27 (the CYD's RX) |
+| VCC | **leave disconnected** |
+
+The CYD is powered over its own USB, so do not also feed it from the adapter.
+**Set the adapter to 3.3 V logic** — a 5 V TX into GPIO27 exceeds the ESP32's
+3.6 V absolute maximum.
+
+### Protocol version
+
+Updated to UART protocol v2 to match `iDryerControllerV2` v2.0.0 and the pinned
+`idryer-core`. Three things were wrong for v2, all of which fail the same way —
+`UartBridge::validateLength` compares payload length by exact equality, so a
+mismatched frame is dropped in silence rather than erroring:
+
+- `PROTOCOL_VERSION` was 1, and the emulator also rejected inbound v2 frames.
+- Hello was 86 bytes; v2 grew `hardwareVersion` from 8 to 16 (94 bytes).
+- Status lacked the trailing `ignoreExternalCmd` byte (134 bytes).
+
+Two were broken before that, independent of the version: `make_status()` packed
+13 fields into a 14-field struct — missing `durationMinutes`, and treating the
+signed `targetTempC10` as unsigned — so it raised on every call; and
+`make_telemetry()` did not pad to four units, emitting 8 bytes where the fixed
+wire struct is 29.
+
+Frame sizes are asserted in the builders now, so a future contract change fails
+loudly instead of going quiet.
 
 ---
 
-### emulate_controller.py
-**Назначение:** Продвинутый эмулятор RP2040 с аргументами командной строки  
-**Статус:** ✅ Актуален (использует правильные структуры данных)
-
-**Запуск:**
-```bash
-python3 emulate_controller.py --port /dev/ttyUSB0 --units 2 --fw-major 2
-```
-
-**Параметры:**
-- `--port` — UART порт (по умолчанию /dev/cu.usbserial-130)
-- `--baud` — скорость (по умолчанию 115200)
-- `--units` — количество юнитов 1-4 (по умолчанию 2)
-- `--fw-major` — MAJOR версия firmware (по умолчанию 2)
-- `--session` — длительность сессии в секундах (по умолчанию 120)
-- `--rfid` — отправить RFID событие через 15с
-
-**Автоматический режим:**
-- Отправляет Hello через 2с после запуска
-- Периодическая телеметрия (5с), статус (10с), heartbeat (5с)
-- Реагирует на HelloRequest, Command, ConfigPush
-- Поддержка версионирования протокола
-
----
-
-### mock_portal.py
-**Назначение:** Mock Backend для тестирования cloud flow без реального сервера  
-**Статус:** ✅ Актуален
-
-**Запуск:**
-```bash
-pip install flask python-socketio eventlet
-python3 mock_portal.py
-```
-
-**Сервер:** http://0.0.0.0:5050
-
-**Настройка ESP32:**
-```ini
-build_flags =
-  -DIDRYER_API_BASE="http://192.168.1.100:5050/api"
-  -DMQTT_USE_TLS=0
-```
-
-**API endpoints:**
-- `POST /api/devices/provision` — получить токен
-- `POST /api/devices/register` — получить PIN для claiming  
-- `GET /api/devices/check-claim/{token}` — проверить claiming
-
-**Логика:**
-- provision выдает токен `mock-token-{serial}`
-- register выдает PIN `12345678`
-- check-claim автоматически подтверждает при первом вызове
-
----
-
-### read_serial.py
-**Назначение:** Простой монитор UART для чтения логов ESP32  
-**Статус:** ✅ Актуален
-
-**Запуск:**
-```bash
-python3 read_serial.py
-```
-
-**Возможности:**
-- Автоматический reset ESP32 через DTR/RTS
-- Чтение 60 секунд с выводом в stdout
-- Обработка Unicode ошибок
-
-**Настройка:** Отредактируйте переменные `port` и `baud` в файле
-
----
-
-## 🛠 Build инструменты
-
-### extra_scripts/copy_firmware.py
-**Назначение:** Post-build скрипт для копирования firmware в две папки  
-**Статус:** ✅ Исправлен и работает
-
-**Функции:**
-- Копирует firmware.bin, bootloader.bin, partitions.bin, boot_app0.bin
-- Локальная папка: `firmware/<board>/`
-- Flasher Portal: `/Users/ruslanpavlucenko/Projects/iDryerPortal/flasher-portal/firmware/link/<slot>/<board>/`
-- Правильный маппинг имен плат для flasher-portal
-- Определяет slot (prod/stage) по имени environment
-
-**Исправления v2.0:**
-- Добавлено копирование в локальную папку firmware/
-- Исправлен маппинг имен плат (esp32c3-super-mini остается с дефисами)
-- Улучшенные логи с индикацией успеха
-
-### extra_scripts/copy_menu.py  
-**Назначение:** Pre-build скрипт для синхронизации menu файлов с RP2040  
-**Статус:** ✅ Актуален
-
-**Функции:**
-- Копирует menu_meta.h, menu_ids.h, menu_cache.h/cpp из RP2040 проекта
-- Копирует version.h для синхронизации версий
-- Создает library.json для lib/idryer-menu
-- Поддержка симлинков и кэширования
-
----
-
-## 📋 Использование
-
-### Базовое тестирование ESP32
-```bash
-# 1. Запустить эмулятор MCU
-python3 tools/emulate_controller.py --port /dev/ttyUSB0 --units 2
-
-# 2. В другом терминале - мониторинг логов
-python3 tools/read_serial.py
-```
-
-### Тестирование cloud flow
-```bash
-# 1. Запустить mock backend
-python3 tools/mock_portal.py
-
-# 2. Собрать ESP32 с mock настройками
-# 3. Запустить эмулятор с claiming
-python3 tools/emulate_controller.py --port /dev/ttyUSB0 --rfid
-```
-
-### Интерактивное тестирование протокола
-```bash
-# Запустить интерактивный эмулятор
-python3 tools/test_uart_rp2040_emulator.py /dev/ttyUSB0
-
-# Выбрать опцию 'I' для interactive режима
-# Эмулятор будет отвечать на команды от ESP32
-```
-
-## ✅ Статус актуальности
-
-| Инструмент | Статус | Протокол | Обновлен |
-|------------|--------|----------|----------|
-| test_uart_rp2040_emulator.py | ✅ v2.0 | UART v1 | 2026-03-25 |
-| emulate_controller.py | ✅ Актуален | UART v1 | Проверен |
-| mock_portal.py | ✅ Актуален | HTTP API | Проверен |
-| read_serial.py | ✅ Актуален | Serial | Проверен |
-| copy_firmware.py | ✅ Актуален | Build | Проверен |
-| copy_menu.py | ✅ Актуален | Build | Проверен |
-
-Все инструменты синхронизированы с текущим протоколом lib/idryer-protocol версии 1.
+Upstream also shipped `mock_portal.py`, `fake_bambu/` and `fake_moonraker/`.
+All three exercised cloud and printer-integration paths that this fork does not
+build, so they were removed.

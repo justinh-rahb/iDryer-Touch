@@ -1,0 +1,203 @@
+name: Release firmware
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build and publish"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  PRODUCT_NAME: iDryer-Touch
+  PRODUCT_LABEL: iDryer Touch
+
+jobs:
+  build:
+    name: Build ${{ matrix.board }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - env: cyd-2432s028r
+            board: cyd-2432s028r
+            chip: esp32
+          - env: esp32c3-super-mini-prod
+            board: esp32c3-super-mini
+            chip: esp32c3
+          - env: esp32c3-prod
+            board: esp32c3-devkitm
+            chip: esp32c3
+          - env: xiao-esp32s3-prod
+            board: xiao-esp32s3
+            chip: esp32s3
+          - env: waveshare-esp32s3-zero-prod
+            board: waveshare-esp32s3-zero
+            chip: esp32s3
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: platformio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: platformio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Verify dependencies
+        run: scripts/bootstrap.sh --check
+
+      - name: Build firmware
+        run: pio run -e "${{ matrix.env }}"
+
+      - name: Package flashable images
+        shell: bash
+        env:
+          PIO_ENV: ${{ matrix.env }}
+          BOARD_NAME: ${{ matrix.board }}
+          CHIP: ${{ matrix.chip }}
+        run: |
+          set -euo pipefail
+
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          build_dir=".pio/build/${PIO_ENV}"
+          base="${PRODUCT_NAME}-${tag}-${BOARD_NAME}"
+          boot_app0="${HOME}/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
+          esptool="${HOME}/.platformio/packages/tool-esptoolpy/esptool.py"
+
+          mkdir -p dist/package
+
+          cp "$build_dir/firmware.bin"   "dist/${base}-firmware.bin"
+          cp "$build_dir/firmware.bin"   dist/package/firmware.bin
+          cp "$build_dir/bootloader.bin" dist/package/bootloader.bin
+          cp "$build_dir/partitions.bin" dist/package/partitions.bin
+          cp "$boot_app0"                dist/package/boot_app0.bin
+
+          # ESP32-C3/S3 bootloaders live at 0x0; classic ESP32 uses 0x1000.
+          boot_offset="0x0"
+          [ "$CHIP" = "esp32" ] && boot_offset="0x1000"
+
+          python "$esptool" --chip "$CHIP" merge_bin \
+            -o "dist/${base}-factory.bin" \
+            "$boot_offset" dist/package/bootloader.bin \
+            0x8000 dist/package/partitions.bin \
+            0xe000 dist/package/boot_app0.bin \
+            0x10000 dist/package/firmware.bin
+
+          cat > dist/package/manifest.json <<EOF
+          {
+            "name": "${PRODUCT_LABEL} (${BOARD_NAME})",
+            "version": "${tag#v}",
+            "tag": "${tag}",
+            "environment": "${PIO_ENV}",
+            "chip": "${CHIP}",
+            "parts": [
+              { "file": "bootloader.bin", "offset": "${boot_offset}" },
+              { "file": "partitions.bin", "offset": "0x8000" },
+              { "file": "boot_app0.bin",  "offset": "0xe000" },
+              { "file": "firmware.bin",   "offset": "0x10000" }
+            ]
+          }
+          EOF
+
+          (cd dist/package && zip -9 "../${base}-flash-bundle.zip" ./*)
+          rm -rf dist/package
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.board }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Download build output
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          previous_tag="$(git describe --tags --abbrev=0 "${tag}^{}^" 2>/dev/null || true)"
+          if [ -n "$previous_tag" ]; then
+            changes="$(git log --pretty=format:'- %s (%h)' "${previous_tag}..${tag}^{}")"
+          else
+            changes="- Initial ${PRODUCT_LABEL} release."
+          fi
+          [ -n "$changes" ] || changes="- Firmware build for ${tag}."
+
+          cat > dist/release-notes.md <<EOF
+          ## What Changed
+
+          ${changes}
+
+          ## Install
+
+          Pick the asset matching your board.
+
+          - \`*-factory.bin\` — merged image for a full serial flash. Write at offset \`0x0\`
+            (\`0x1000\` on classic ESP32).
+          - \`*-firmware.bin\` — app image only, for web OTA from the device UI, or manual
+            flashing at offset \`0x10000\`.
+          - \`*-flash-bundle.zip\` — individual parts plus \`manifest.json\` with offsets.
+
+          \`\`\`bash
+          esptool.py --chip esp32c3 --port /dev/tty.usbmodemXXXX write_flash 0x0 ${PRODUCT_NAME}-${tag}-esp32c3-super-mini-factory.bin
+          \`\`\`
+          EOF
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/*.bin dist/*.zip --clobber
+          else
+            gh release create "$tag" dist/*.bin dist/*.zip \
+              --title "${PRODUCT_LABEL} ${tag}" \
+              --notes-file dist/release-notes.md
+          fi

@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.env }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # cyd-2432s028r is the iDryer Touch target; the rest are upstream's
+        # cloud builds, kept green so `upstream` merges stay easy.
+        env:
+          - cyd-2432s028r
+          - esp32c3-prod
+          - esp32c3-super-mini-prod
+          - xiao-esp32s3-prod
+          - waveshare-esp32s3-zero-prod
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # lib/idryer-core and vendor/iDryerControllerV2 are submodules pinned
+          # to exact commits. Without this the build fails on missing headers.
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: platformio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: platformio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Verify dependencies
+        run: scripts/bootstrap.sh --check
+
+      - name: Build
+        run: pio run -e "${{ matrix.env }}"
+
+      - name: Report size
+        run: |
+          set -euo pipefail
+          elf=".pio/build/${{ matrix.env }}/firmware.elf"
+          bin=".pio/build/${{ matrix.env }}/firmware.bin"
+          {
+            echo "### ${{ matrix.env }}"
+            echo ""
+            echo "| Artifact | Bytes |"
+            echo "| --- | ---: |"
+            echo "| firmware.bin | $(stat -c%s "$bin") |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.env }}
+          path: |
+            .pio/build/${{ matrix.env }}/firmware.bin
+            .pio/build/${{ matrix.env }}/firmware.elf
+          retention-days: 14
+          if-no-files-found: error

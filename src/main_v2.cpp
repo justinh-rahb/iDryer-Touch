@@ -1,3 +1,9 @@
+// Local-only builds (iDryer Touch) replace this entire translation unit with
+// src/touch/TouchApp.cpp — same pattern as iHeater-Remote's standalone target.
+// Keeping the guard here rather than deleting the cloud path keeps `upstream`
+// merges from pavluchenkor/iDryer-Link conflict-free.
+#if !defined(IDRYER_TOUCH_LOCAL)
+
 // iDryer Link v2 — UART bridge RP2040↔Cloud на базе idryer-core SDK.
 //
 // Архитектура: RP2040 (контроллер) <—UART→ ESP32 (этот файл) <—WiFi/MQTT→ Портал
@@ -28,18 +34,28 @@
 
 using namespace idryer;
 
-// ── Пины UART (ESP32-C3 Super Mini, JTAG-shared → требуют gpio_reset_pin) ──
-constexpr int UART_RX_PIN = 6;
-constexpr int UART_TX_PIN = 7;
+// ── Пины UART ────────────────────────────────────────────────────────────────
+// По умолчанию ESP32-C3 Super Mini (GPIO6/7, JTAG-shared → требуют gpio_reset_pin).
+// Переопределяются через build_flags — на CYD (ESP32-2432S028R) свободны только
+// GPIO22/27 (CN1) и GPIO35 (input-only, P3): см. docs/ARCHITECTURE.md.
+#ifndef IDRYER_UART_RX_PIN
+#define IDRYER_UART_RX_PIN 6
+#endif
+#ifndef IDRYER_UART_TX_PIN
+#define IDRYER_UART_TX_PIN 7
+#endif
+
+constexpr int UART_RX_PIN = IDRYER_UART_RX_PIN;
+constexpr int UART_TX_PIN = IDRYER_UART_TX_PIN;
 
 // ── SDK объекты ──────────────────────────────────────────────────────────────
 static const iDryer::Config CFG = {
     .deviceType        = iDryer::DeviceType::Dryer,
     .unitsCount        = 1,  // реальное число физических юнитов на этом железе; уточняется из Hello RP2040
-    .hasHeaterPower    = true,
-    .hasFanStatus      = true,
+    .hasHeater         = true,
+    .hasFan            = true,
     .hasLed            = false,
-    .hasScales         = true,
+    .hasWeight         = true,
     .hasRfid           = true,
     .hasAirTemp        = true,
     .hasAirHumidity    = true,
@@ -295,12 +311,22 @@ static void onStatus(const UartStatusPayload& p, const UartFrameHeader&) {
     s_link.publishStatusNow();
 }
 
+// Telemetry::weightG was dropped in idryer-core when weights moved to their own
+// topic (core 5798629). Publish directly instead of staging it in telemetry.
 static void onWeights(const UartWeightsPayload& p, const UartFrameHeader&) {
+    if (p.count == 0) return;
+    StaticJsonDocument<192> doc;
+    JsonArray arr = doc.createNestedArray("weights");
     for (uint8_t i = 0; i < p.count && i < iDryer::MAX_UNITS; i++) {
         const auto& w = p.weights[i];
-        if (w.unitId < iDryer::MAX_UNITS)
-            s_link.telemetry.weightG[w.unitId] = w.weightGramsC10 / 10u;
+        if (w.unitId >= iDryer::MAX_UNITS) continue;
+        JsonObject o = arr.createNestedObject();
+        char uid[4];
+        snprintf(uid, sizeof(uid), "U%u", w.unitId + 1);
+        o["unitId"]  = uid;
+        o["weightG"] = w.weightGramsC10 / 10u;
     }
+    s_link.devicePublisher()->publishWeights(doc);
 }
 
 // RP2040 шлёт JSON меню фрагментами. ConfigReceiver склеивает, потом публикуем.
@@ -598,3 +624,5 @@ void loop() {
         }
     }
 }
+
+#endif // !IDRYER_TOUCH_LOCAL
